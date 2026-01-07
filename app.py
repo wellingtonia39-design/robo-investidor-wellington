@@ -2,35 +2,84 @@ import streamlit as st
 import pandas as pd
 import requests
 import json
-import os
 import time
 import plotly.express as px
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 8.1", layout="wide", page_icon="🦅")
-ARQUIVO_DADOS = 'minha_carteira.json'
-ARQUIVO_CONFIG = 'config.json'
+st.set_page_config(page_title="Robô Investidor Pro 9.0 (Google Cloud)", layout="wide", page_icon="☁️")
 
-# --- CARTEIRAS RECOMENDADAS ---
-CARTEIRAS_PRONTAS = {
-    "🏆 Carteira Recomendada IA (Equilíbrio Total)": {
-        "WEGE3": 10, "ITUB4": 15, "VALE3": 10,  
-        "TAEE11": 10, "PSSA3": 5,               
-        "IVVB11": 20,                           
-        "HGLG11": 10, "KNCR11": 10, "MXRF11": 10 
-    },
-    "Carteira Dividendos (Rico)": {
-        "CURY3": 10, "CXSE3": 10, "DIRR3": 10, "ITSA4": 10, 
-        "ITUB4": 10, "PETR4": 10, "POMO4": 10, "RECV3": 10, "VALE3": 10
-    },
-    "Carteira FIIs (Rico)": {
-        "XPML11": 10, "RBRR11": 10, "RBRX11": 9, "XPCI11": 9,
-        "BTLG11": 6, "LVBI11": 6, "PCIP11": 6, "PVBI11": 6,
-        "KNCR11": 5, "BRCO11": 5, "XPLG11": 4, "KNSC11": 1
-    }
-}
+# --- NOME DA PLANILHA NO GOOGLE (Tem que ser exato) ---
+NOME_PLANILHA_GOOGLE = "carteira_robo_db"
 
-# --- MAPEAMENTO DE SETORES ---
+# --- SENHA DE ACESSO (Pode deixar fixo ou usar Secrets também) ---
+SENHA_SECRETA = "123456"
+
+# --- CONEXÃO COM GOOGLE SHEETS ---
+def conectar_google_sheets():
+    try:
+        # Pega as credenciais do "Cofre" do Streamlit
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_dict = dict(st.secrets["gcp_service_account"]) # Transforma em dict python
+        
+        # Corrige formatação da chave privada (o TOML às vezes zoa as quebras de linha)
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        
+        # Abre a planilha
+        sheet = client.open(NOME_PLANILHA_GOOGLE).sheet1
+        return sheet
+    except Exception as e:
+        st.error(f"Erro ao conectar no Google: {e}")
+        return None
+
+# --- CARREGAR DADOS (DA NUVEM) ---
+def carregar_carteira():
+    sheet = conectar_google_sheets()
+    if sheet:
+        try:
+            dados = sheet.get_all_records()
+            carteira = {}
+            # Converte a lista do Google para o formato do nosso Robô
+            for linha in dados:
+                t = linha['Ticker']
+                carteira[t] = {
+                    'qtde': linha['Qtd'],
+                    'meta_pct': linha['Meta'],
+                    'pm': float(str(linha['PM']).replace(',', '.')),
+                    'divs': float(str(linha['Divs']).replace(',', '.'))
+                }
+            return carteira
+        except:
+            return {} # Retorna vazio se der erro ou estiver vazia
+    return {}
+
+# --- SALVAR DADOS (NA NUVEM) ---
+def salvar_carteira(carteira):
+    sheet = conectar_google_sheets()
+    if sheet:
+        # Prepara os dados para o formato de tabela
+        linhas = []
+        # Cabeçalho
+        linhas.append(["Ticker", "Qtd", "Meta", "PM", "Divs"])
+        
+        for t, dados in carteira.items():
+            linhas.append([
+                t, 
+                dados['qtde'], 
+                dados['meta_pct'], 
+                dados.get('pm', 0.0), 
+                dados.get('divs', 0.0)
+            ])
+        
+        # Limpa e Reescreve
+        sheet.clear()
+        sheet.update(linhas)
+
+# --- CONFIGURAÇÕES DE DADOS AUXILIARES ---
 SETORES = {
     "WEGE3": "Indústria", "VALE3": "Mineração", "PSSA3": "Seguros",
     "ITUB4": "Bancos", "ITSA4": "Bancos", "BBAS3": "Bancos",
@@ -41,58 +90,9 @@ SETORES = {
     "PETR4": "Petróleo", "CURY3": "Construção", "CXSE3": "Seguros",
     "DIRR3": "Construção", "POMO4": "Indústria", "RECV3": "Petróleo"
 }
-
-# --- GERENCIAMENTO DE CONFIGURAÇÕES ---
-def carregar_config():
-    padrao = {"senha": "123456", "meta_mensal": 1000.00}
-    if os.path.exists(ARQUIVO_CONFIG):
-        try:
-            with open(ARQUIVO_CONFIG, 'r') as f:
-                return json.load(f)
-        except: return padrao
-    return padrao
-
-def salvar_config(conf):
-    with open(ARQUIVO_CONFIG, 'w') as f:
-        json.dump(conf, f, indent=4)
-
-# --- SISTEMA DE LOGIN ---
-def check_password():
-    conf = carregar_config()
-    if 'logado' not in st.session_state: st.session_state['logado'] = False
-    if st.session_state['logado']: return True
-    
-    col1, col2, col3 = st.columns([1,2,1])
-    with col2:
-        st.markdown("## 🔐 Robô Investidor Pro")
-        senha = st.text_input("Digite sua senha:", type="password")
-        if st.button("Entrar", type="primary"):
-            if senha == conf['senha']:
-                st.session_state['logado'] = True; st.rerun()
-            else: st.error("Senha incorreta!")
-    return False
-
-# --- FUNÇÕES DE DADOS ---
-def carregar_carteira():
-    if os.path.exists(ARQUIVO_DADOS):
-        try:
-            with open(ARQUIVO_DADOS, 'r') as f:
-                dados = json.load(f)
-                for t in dados:
-                    if 'pm' not in dados[t]: dados[t]['pm'] = 0.0
-                    if 'qtde' not in dados[t]: dados[t]['qtde'] = 0
-                    if 'meta_pct' not in dados[t]: dados[t]['meta_pct'] = 0
-                    if 'divs' not in dados[t]: dados[t]['divs'] = 0.0
-                return dados
-        except: return {}
-    else: return {}
-
-def salvar_carteira(dados):
-    with open(ARQUIVO_DADOS, 'w') as f: json.dump(dados, f, indent=4)
-
-def obter_setor(ticker):
-    t_limpo = ticker.replace(".SA", "").strip()
-    return SETORES.get(t_limpo, "Outros")
+CARTEIRAS_PRONTAS = {
+    "🏆 Carteira Recomendada IA": {"WEGE3": 10, "ITUB4": 15, "VALE3": 10, "TAEE11": 10, "PSSA3": 5, "IVVB11": 20, "HGLG11": 10, "KNCR11": 10, "MXRF11": 10}
+}
 
 # --- COTAÇÃO ---
 def obter_preco_atual(ticker):
@@ -127,204 +127,123 @@ def calcular_compras(df, aporte):
         caixa -= preco
     return df, caixa
 
-# ==========================================
-#      INÍCIO DO APP
-# ==========================================
+def obter_setor(ticker):
+    return SETORES.get(ticker.replace(".SA","").strip(), "Outros")
 
+# --- LOGIN ---
+def check_password():
+    if 'logado' not in st.session_state: st.session_state['logado'] = False
+    if st.session_state['logado']: return True
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        st.markdown("## 🔐 Acesso Google Cloud")
+        senha = st.text_input("Digite sua senha:", type="password")
+        if st.button("Entrar", type="primary"):
+            if senha == SENHA_SECRETA:
+                st.session_state['logado'] = True; st.rerun()
+            else: st.error("Senha incorreta!")
+    return False
+
+# ================= APP START =================
 if check_password():
-    conf = carregar_config()
-    carteira = carregar_carteira()
-
-    # --- MENU LATERAL ---
+    # --- CHECK DE CONEXÃO ---
+    with st.spinner("Conectando ao Google Sheets..."):
+        carteira = carregar_carteira()
+    
     with st.sidebar:
-        st.title("🦅 Painel de Controle")
-        menu = st.radio("Navegação", ["🏠 Minha Carteira", "⚙️ Configurações"])
+        st.title("☁️ Painel Google Cloud")
+        if st.button("Sair"): st.session_state['logado']=False; st.rerun()
         st.divider()
-        if st.button("🔒 Sair"): st.session_state['logado'] = False; st.rerun()
+        st.success("Status: Conectado ao Google Drive ✅")
         st.divider()
-        modo_live = st.toggle("🔄 Modo Live (60s)")
+        modo_live = st.toggle("Modo Live (60s)")
 
-    # ==========================================
-    #      TELA 1: CARTEIRA (PRINCIPAL)
-    # ==========================================
-    if menu == "🏠 Minha Carteira":
-        st.title("Minha Carteira")
+    st.title("Minha Carteira (Sincronizada na Nuvem)")
 
-        if not carteira:
-            st.warning("Sua carteira está vazia! Vá em 'Configurações' para importar um modelo.")
-            
-        # --- PAINEL DA LIBERDADE ---
-        patrimonio_estimado = sum([d['qtde'] * d.get('pm', 0) for d in carteira.values()])
-        renda_estimada = patrimonio_estimado * 0.007 
-        meta = conf['meta_mensal']
-        progresso = min(renda_estimada / meta, 1.0) if meta > 0 else 0
+    # --- INPUTS ---
+    c1, c2 = st.columns([1, 2])
+    aporte = c1.number_input("💰 Aporte (R$)", value=1000.00, step=100.0)
+    c2.write(""); c2.write("")
+    executar = c2.button("🚀 Analisar", type="primary")
+
+    # --- EDIÇÃO ---
+    with st.expander("📝 Editar Ativos (Salva no Google Sheets)"):
+        # Importar Modelo
+        mod = st.selectbox("Importar Modelo:", ["..."] + list(CARTEIRAS_PRONTAS.keys()))
+        if st.button("Aplicar Modelo"):
+            if mod != "...":
+                novos = CARTEIRAS_PRONTAS[mod]
+                for t, m in novos.items():
+                    if t not in carteira: carteira[t] = {'qtde':0, 'meta_pct':m, 'pm':0.0, 'divs':0.0}
+                salvar_carteira(carteira)
+                st.rerun()
+
+        add = st.text_input("Novo Ticker:")
+        if st.button("Adicionar") and add:
+            t = add.upper().strip().replace(".SA","")
+            if t not in carteira: 
+                carteira[t]={'qtde':0,'meta_pct':10,'pm':0.0,'divs':0.0}
+                salvar_carteira(carteira); st.rerun()
+
+        st.divider()
+        mudou_algo = False
+        remover_lista = []
         
-        st.container()
-        col_meta1, col_meta2 = st.columns([3, 1])
-        with col_meta1:
-            st.subheader(f"🚀 Rumo à Liberdade: R$ {renda_estimada:.2f} / R$ {meta:.2f} (mês)")
-            st.progress(progresso)
-        with col_meta2:
-            st.metric("Concluído", f"{progresso*100:.1f}%")
-        st.divider()
-
-        # INPUTS E AÇÃO
-        c1, c2 = st.columns([1, 2])
-        aporte = c1.number_input("💰 Aporte Nubank (R$)", value=1000.00, step=100.0)
-        c2.write(""); c2.write("")
-        executar = c2.button("🚀 Analisar Oportunidades", type="primary")
-
-        # --- ÁREA DE EDIÇÃO (EXPANSÍVEL) ---
-        with st.expander("📝 Editar Quantidades / Metas / Dividendos"):
-            add = st.text_input("Adicionar Ticker (ex: KLBN11)")
-            if st.button("Adicionar") and add:
-                t = add.upper().strip().replace(".SA","")
-                if t not in carteira: 
-                    carteira[t]={'qtde':0,'meta_pct':10,'pm':0.0,'divs':0.0}
-                    salvar_carteira(carteira); st.rerun()
+        if not carteira: st.warning("Planilha Vazia.")
+        
+        for t in list(carteira.keys()):
+            cols = st.columns([1, 1, 1, 1, 0.5])
+            cols[0].write(f"**{t}**")
+            nq = cols[1].number_input(f"Q", int(carteira[t]['qtde']), key=f"q_{t}", label_visibility="collapsed")
+            nm = cols[2].number_input(f"M", int(carteira[t]['meta_pct']), key=f"m_{t}", label_visibility="collapsed")
+            np = cols[3].number_input(f"P", float(carteira[t].get('pm',0)), key=f"p_{t}", label_visibility="collapsed")
             
-            st.divider()
-            for t in list(carteira.keys()):
-                cols = st.columns([1, 1, 1, 1, 0.5])
-                cols[0].write(f"**{t}**")
-                nq = cols[1].number_input(f"Qtd", int(carteira[t]['qtde']), key=f"q_{t}", label_visibility="collapsed")
-                nm = cols[2].number_input(f"Meta %", int(carteira[t]['meta_pct']), key=f"m_{t}", label_visibility="collapsed")
-                divs = cols[3].number_input(f"Divs R$", float(carteira[t].get('divs',0)), key=f"d_{t}", label_visibility="collapsed")
-                
-                # PM (Preço Médio) agora editável aqui também
-                pm_val = st.number_input(f"PM {t}", float(carteira[t].get('pm',0)), key=f"pm_{t}", label_visibility="collapsed")
-                
-                if cols[4].button("🗑️", key=f"del_{t}"):
-                    del carteira[t]; salvar_carteira(carteira); st.rerun()
-                
-                if nq!=carteira[t]['qtde'] or nm!=carteira[t]['meta_pct'] or divs!=carteira[t].get('divs',0) or pm_val!=carteira[t].get('pm',0):
-                    carteira[t].update({'qtde':nq, 'meta_pct':nm, 'divs':divs, 'pm':pm_val})
-                    salvar_carteira(carteira)
+            if cols[4].button("🗑️", key=f"d_{t}"): remover_lista.append(t); mudou_algo=True
 
-        if executar or modo_live:
-            if not carteira: st.info("Adicione ativos para começar.")
-            else:
-                with st.spinner("Processando..."):
-                    df = pd.DataFrame.from_dict(carteira, orient='index')
-                    precos = {}
-                    if not modo_live: bar = st.progress(0)
-                    for i, t in enumerate(df.index):
-                        precos[t] = obter_preco_atual(t)
-                        if not modo_live: bar.progress((i+1)/len(df))
-                    if not modo_live: bar.empty()
+            if nq!=carteira[t]['qtde'] or nm!=carteira[t]['meta_pct'] or np!=carteira[t].get('pm',0):
+                carteira[t].update({'qtde':nq, 'meta_pct':nm, 'pm':np})
+                mudou_algo=True
+        
+        if remover_lista:
+            for t in remover_lista: del carteira[t]
+            salvar_carteira(carteira); st.rerun()
+        
+        if mudou_algo: salvar_carteira(carteira)
+
+    # --- CÁLCULOS E DASHBOARD ---
+    if executar or modo_live:
+        if carteira:
+            with st.spinner("Analisando..."):
+                df = pd.DataFrame.from_dict(carteira, orient='index')
+                precos = {}
+                for t in df.index: precos[t] = obter_preco_atual(t)
+                df['preco_atual'] = df.index.map(precos)
+                df = df[df['preco_atual'] > 0]
+
+                if not df.empty:
+                    df['total_atual'] = df['qtde'] * df['preco_atual']
+                    df['total_inv'] = df['qtde'] * df['pm']
+                    df['lucro'] = df['total_atual'] - df['total_inv']
+                    df['setor'] = df.index.map(obter_setor)
                     
-                    df['preco_atual'] = df.index.map(precos)
-                    df = df[df['preco_atual'] > 0]
+                    df_fim, sobra = calcular_compras(df, aporte)
                     
-                    if df.empty: st.error("Erro de conexão com a Bolsa.")
-                    else:
-                        df['total_atual'] = df['qtde'] * df['preco_atual']
-                        df['total_inv'] = df['qtde'] * df['pm']
-                        df['lucro_cota'] = df['total_atual'] - df['total_inv']
-                        df['lucro_real'] = df['lucro_cota'] + df['divs']
-                        df['rentab_pct'] = df.apply(lambda x: (x['lucro_real']/x['total_inv'])*100 if x['total_inv']>0 else 0, axis=1)
-                        df['yoc_pct'] = df.apply(lambda x: (x['divs']/x['total_inv'])*100 if x['total_inv']>0 else 0, axis=1)
-                        df['setor'] = df.index.map(obter_setor)
-                        
-                        df_fim, sobra = calcular_compras(df, aporte)
-                        
-                        # DASHBOARD
-                        patr = df_fim['total_atual'].sum()
-                        lucro = df_fim['lucro_real'].sum()
-                        custo = aporte - sobra
-                        
-                        k1, k2, k3, k4 = st.columns(4)
-                        k1.metric("Patrimônio", f"R$ {patr:,.2f}")
-                        k2.metric("Rentabilidade Real", f"R$ {lucro:,.2f}", delta=f"{(lucro/patr*100) if patr>0 else 0:.1f}%")
-                        k3.metric("Aporte Sugerido", f"R$ {custo:,.2f}")
-                        k4.metric("Caixa/Sobra", f"R$ {sobra:,.2f}")
-                        
-                        st.divider()
-                        
-                        # --- GRÁFICOS ---
-                        g1, g2 = st.columns(2)
-                        with g1: st.plotly_chart(px.pie(df_fim, values='total_atual', names=df_fim.index, hole=0.5, title="Por Ativo"), use_container_width=True)
-                        with g2: 
-                            df_s = df_fim.groupby('setor')['total_atual'].sum().reset_index()
-                            st.plotly_chart(px.pie(df_s, values='total_atual', names='setor', hole=0.5, title="Por Setor"), use_container_width=True)
-
-                        # --- LISTA DE COMPRAS ---
-                        st.subheader("🛒 Ordem de Compra")
-                        compra = df_fim[df_fim['comprar_qtd']>0].sort_values('custo_total', ascending=False)
-                        if not compra.empty:
-                            st.dataframe(compra[['preco_atual','meta_pct','comprar_qtd','custo_total']].style.format({'preco_atual':'R$ {:.2f}','custo_total':'R$ {:.2f}','meta_pct':'{:.0f}%'}), use_container_width=True)
-                        else: st.success("Nada para comprar hoje!")
-                        
-                        # --- TABELA DE MONITORAMENTO (VOLTOU!) ---
-                        st.divider()
-                        st.subheader("🔎 Monitoramento Detalhado")
-                        cols_mostrar = ['qtde','pm','preco_atual','divs','lucro_real','rentab_pct', 'yoc_pct']
-                        st.dataframe(df_fim[cols_mostrar]
-                                     .sort_values('rentab_pct', ascending=False)
-                                     .style.format({
-                                         'pm':'R$ {:.2f}',
-                                         'preco_atual':'R$ {:.2f}',
-                                         'divs':'R$ {:.2f}',
-                                         'lucro_real':'R$ {:.2f}',
-                                         'rentab_pct':'{:.1f}%',
-                                         'yoc_pct':'{:.1f}%'
-                                     })
-                                     .applymap(lambda x: 'color: green' if x>0 else 'color: red', subset=['lucro_real','rentab_pct']), 
-                                     use_container_width=True)
-
-    # ==========================================
-    #      TELA 2: CONFIGURAÇÕES
-    # ==========================================
-    elif menu == "⚙️ Configurações":
-        st.title("Configurações do Robô")
-        
-        with st.container():
-            st.subheader("🎯 Meta Financeira")
-            nova_meta = st.number_input("Qual sua meta de renda mensal passiva? (R$)", value=float(conf['meta_mensal']), step=100.0)
-            if nova_meta != conf['meta_mensal']:
-                conf['meta_mensal'] = nova_meta
-                salvar_config(conf)
-                st.success("Meta atualizada!")
-
-        st.divider()
-        
-        # --- CORREÇÃO DO BUG DA SENHA AQUI ---
-        with st.container():
-            st.subheader("🔑 Alterar Senha")
-            c_s1, c_s2 = st.columns(2)
-            nova_senha = c_s1.text_input("Nova Senha", type="password")
-            confirmar = c_s2.text_input("Confirme a Senha", type="password") # Corrigido nome da variável
-            
-            if st.button("Salvar Nova Senha"):
-                if nova_senha == confirmar: # Corrigido comparação
-                    if len(nova_senha) > 3:
-                        conf['senha'] = nova_senha
-                        salvar_config(conf)
-                        st.success("Senha alterada com sucesso! Faça login novamente.")
-                        time.sleep(2)
-                        st.session_state['logado'] = False
-                        st.rerun()
-                    else: st.warning("A senha deve ter pelo menos 4 caracteres.")
-                else: st.error("As senhas não coincidem.")
-
-        st.divider()
-        
-        with st.container():
-            st.subheader("💾 Backup e Restauração")
-            if os.path.exists(ARQUIVO_DADOS):
-                with open(ARQUIVO_DADOS, "r") as f:
-                    st.download_button("📥 Baixar Backup da Carteira (.json)", f, "minha_carteira.json")
-            
-            st.write("---")
-            st.write("**Resetar ou Importar Modelo**")
-            modelo = st.selectbox("Escolha um modelo:", ["Selecionar..."] + list(CARTEIRAS_PRONTAS.keys()))
-            if st.button("Aplicar Modelo"):
-                if modelo != "Selecionar...":
-                    novos = CARTEIRAS_PRONTAS[modelo]
-                    for t, m in novos.items():
-                        if t not in carteira: carteira[t] = {'qtde':0, 'meta_pct':m, 'pm':0.0, 'divs':0.0}
-                        else: carteira[t]['meta_pct'] = m
-                    salvar_carteira(carteira)
-                    st.toast("Modelo aplicado!")
+                    k1, k2, k3, k4 = st.columns(4)
+                    k1.metric("Patrimônio", f"R$ {df_fim['total_atual'].sum():,.2f}")
+                    k2.metric("Lucro", f"R$ {df_fim['lucro'].sum():,.2f}")
+                    k3.metric("Aporte", f"R$ {(aporte-sobra):,.2f}")
+                    k4.metric("Caixa", f"R$ {sobra:,.2f}")
+                    
+                    st.divider()
+                    g1, g2 = st.columns(2)
+                    with g1: st.plotly_chart(px.pie(df_fim, values='total_atual', names=df_fim.index, title="Carteira"), use_container_width=True)
+                    with g2: 
+                        df_s = df_fim.groupby('setor')['total_atual'].sum().reset_index()
+                        st.plotly_chart(px.pie(df_s, values='total_atual', names='setor', title="Setores"), use_container_width=True)
+                    
+                    compra = df_fim[df_fim['comprar_qtd']>0].sort_values('custo_total', ascending=False)
+                    if not compra.empty:
+                        st.dataframe(compra[['preco_atual','comprar_qtd','custo_total']], use_container_width=True)
+                    else: st.success("Nada para comprar.")
 
     if modo_live: time.sleep(60); st.rerun()
