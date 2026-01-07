@@ -4,13 +4,14 @@ import requests
 import json
 import time
 import plotly.express as px
+import plotly.graph_objects as go # Nova ferramenta de gráficos manuais
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 import math
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 9.7", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="Robô Investidor Pro 9.8", layout="wide", page_icon="🦅")
 
 # --- CONSTANTES ---
 NOME_PLANILHA_GOOGLE = "carteira_robo_db"
@@ -353,7 +354,7 @@ if check_password():
                             hide_index=False
                         )
 
-                        # --- SIMULADOR BOLA DE NEVE (CORRIGIDO V9.7) ---
+                        # --- SIMULADOR BOLA DE NEVE (VERSÃO GRÁFICA MANUAL) ---
                         st.divider()
                         with st.expander("🔮 Simulador Bola de Neve (O Futuro)", expanded=False):
                             st.caption("Veja o poder dos juros compostos com seu aporte mensal atual.")
@@ -380,13 +381,27 @@ if check_password():
                             
                             st.metric(f"Patrimônio em {anos} anos", f"R$ {total:,.2f}", delta=f"Lucro de R$ {total - total_investido:,.2f}")
                             
-                            # SOLUÇÃO ROBUSTA: Usar Gráfico de Linha Preenchida
-                            df_long = df_ev.melt(id_vars=["Ano"], value_vars=["Total Investido", "Total Acumulado"], var_name="Tipo", value_name="Reais")
-                            
-                            fig_ev = px.line(df_long, x="Ano", y="Reais", color="Tipo",
-                                             title="Curva Exponencial de Riqueza", color_discrete_sequence=["#gray", "#00cc96"])
-                            fig_ev.update_traces(fill='tozeroy') # Preenche para parecer área
-                            
+                            # --- GRÁFICO MANUAL (Super Robusto) ---
+                            fig_ev = go.Figure()
+                            # 1. Linha do dinheiro do bolso (Cinza)
+                            fig_ev.add_trace(go.Scatter(
+                                x=df_ev['Ano'], 
+                                y=df_ev['Total Investido'], 
+                                fill='tozeroy', 
+                                mode='lines', 
+                                name='Saiu do Bolso',
+                                line=dict(color='#808080')
+                            ))
+                            # 2. Linha do dinheiro com Juros (Verde) - Preenche até a linha cinza
+                            fig_ev.add_trace(go.Scatter(
+                                x=df_ev['Ano'], 
+                                y=df_ev['Total Acumulado'], 
+                                fill='tonexty', 
+                                mode='lines', 
+                                name='Com Juros (Bola de Neve)',
+                                line=dict(color='#00cc96')
+                            ))
+                            fig_ev.update_layout(title="Curva Exponencial de Riqueza", xaxis_title="Anos", yaxis_title="Patrimônio (R$)")
                             st.plotly_chart(fig_ev, use_container_width=True)
 
             else: st.info("Filtro vazio.")
