@@ -3,15 +3,14 @@ import pandas as pd
 import requests
 import json
 import time
+import plotly.graph_objects as go # Gráfico manual (robusto)
 import plotly.express as px
-import plotly.graph_objects as go
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
-import math
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 9.9", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="Robô Investidor Pro 10.0", layout="wide", page_icon="🎯")
 
 # --- CONSTANTES ---
 NOME_PLANILHA_GOOGLE = "carteira_robo_db"
@@ -82,12 +81,10 @@ def carregar_carteira():
             for linha in dados:
                 t = linha['Ticker']
                 if not t: continue
-                # Tratamento robusto para valores vazios
-                qtde = linha.get('Qtd', 0)
-                if qtde == '': qtde = 0
                 
-                meta = linha.get('Meta', 0)
-                if meta == '': meta = 0
+                # Tratamento robusto para valores vazios
+                qtde = linha.get('Qtd', 0); qtde = 0 if qtde == '' else int(qtde)
+                meta = linha.get('Meta', 0); meta = 0 if meta == '' else int(meta)
                 
                 try: pm = float(str(linha.get('PM', 0)).replace(',', '.'))
                 except: pm = 0.0
@@ -95,7 +92,11 @@ def carregar_carteira():
                 try: divs = float(str(linha.get('Divs', 0)).replace(',', '.'))
                 except: divs = 0.0
                 
-                carteira[t] = {'qtde': int(qtde), 'meta_pct': int(meta), 'pm': pm, 'divs': divs}
+                # NOVO CAMPO: TETO (SNIPER)
+                try: teto = float(str(linha.get('Teto', 0)).replace(',', '.'))
+                except: teto = 0.0
+                
+                carteira[t] = {'qtde': qtde, 'meta_pct': meta, 'pm': pm, 'divs': divs, 'teto': teto}
             return carteira
         except: return {}
     return {}
@@ -104,9 +105,17 @@ def salvar_carteira(carteira):
     sh = conectar_google_sheets()
     if sh:
         ws = pegar_aba_carteira(sh)
-        linhas = [["Ticker", "Qtd", "Meta", "PM", "Divs"]]
+        # Atualizando cabeçalho com TETO
+        linhas = [["Ticker", "Qtd", "Meta", "PM", "Divs", "Teto"]]
         for t, dados in carteira.items():
-            linhas.append([t, dados['qtde'], dados['meta_pct'], dados.get('pm', 0.0), dados.get('divs', 0.0)])
+            linhas.append([
+                t, 
+                dados['qtde'], 
+                dados['meta_pct'], 
+                dados.get('pm', 0.0), 
+                dados.get('divs', 0.0),
+                dados.get('teto', 0.0)
+            ])
         ws.clear()
         ws.update(linhas)
 
@@ -182,7 +191,7 @@ def check_password():
     
     col1, col2, col3 = st.columns([1,2,1])
     with col2:
-        st.markdown("## 🔐 Acesso Seguro (Cloud)")
+        st.markdown("## 🔐 Acesso Sniper (Cloud)")
         senha = st.text_input("Digite sua senha:", type="password")
         if st.button("Entrar", type="primary"):
             if senha == conf['senha']:
@@ -196,7 +205,7 @@ if check_password():
     conf = st.session_state['config_cache']
     
     with st.sidebar:
-        st.title("🦅 Painel Cloud")
+        st.title("🎯 Painel Sniper")
         menu = st.radio("Navegação", ["🏠 Minha Carteira", "⚙️ Configurações"])
         st.divider()
         st.success("Google Drive: Conectado ✅")
@@ -205,7 +214,7 @@ if check_password():
         modo_live = st.toggle("🔄 Modo Live (60s)")
 
     if 'carteira_cache' not in st.session_state:
-        with st.spinner("Sincronizando Banco de Dados..."):
+        with st.spinner("Calibrando Mira do Sniper..."):
             st.session_state['carteira_cache'] = carregar_carteira()
     carteira_completa = st.session_state['carteira_cache']
 
@@ -237,31 +246,19 @@ if check_password():
 
         st.divider()
 
-        # --- CÁLCULO DE LIBERDADE ---
-        patrimonio_est = sum([d['qtde'] * d.get('pm', 0) for d in carteira_exibicao.values()])
-        renda_est_mensal = patrimonio_est * 0.007 
-        meta = conf['meta_mensal']
-        progresso = min(renda_est_mensal / meta, 1.0) if meta > 0 else 0
-        
-        c_meta1, c_meta2 = st.columns([3, 1])
-        with c_meta1:
-            st.subheader(f"🚀 Rumo à Liberdade: R$ {renda_est_mensal:.2f} / R$ {meta:.2f} (mês)")
-            st.progress(progresso)
-        with c_meta2: st.metric("Concluído", f"{progresso*100:.1f}%")
-        st.divider()
-
+        # --- APORTE E AÇÃO ---
         c1, c2 = st.columns([1, 2])
         aporte = c1.number_input("💰 Aporte (R$)", value=1000.00, step=100.0)
         c2.write(""); c2.write("")
         executar = c2.button("🚀 Analisar Carteira", type="primary")
 
         # --- EDIÇÃO ---
-        with st.expander(f"📝 Editar Ativos ({len(carteira_exibicao)} visíveis)", expanded=True):
+        with st.expander(f"📝 Editar Ativos / Configurar Alertas ({len(carteira_exibicao)} visíveis)", expanded=True):
             add = st.text_input("Novo Ticker (ex: BBAS3)")
             if st.button("Adicionar") and add:
                 t = add.upper().strip().replace(".SA","")
                 if t not in carteira_completa: 
-                    carteira_completa[t]={'qtde':0,'meta_pct':10,'pm':0.0,'divs':0.0}
+                    carteira_completa[t]={'qtde':0,'meta_pct':10,'pm':0.0,'divs':0.0, 'teto':0.0}
                     salvar_carteira(carteira_completa) 
                     st.session_state['carteira_cache'] = carteira_completa
                     st.rerun()
@@ -270,24 +267,36 @@ if check_password():
             mudou_algo = False
             remover_lista = []
             
-            cols_head = st.columns([1, 1, 1, 1, 1, 0.5])
+            # CABEÇALHO DO EDITOR
+            cols_head = st.columns([1, 0.8, 0.8, 1, 1, 1, 0.5])
             cols_head[0].markdown("**Ativo**")
             cols_head[1].markdown("**Qtd**")
-            cols_head[2].markdown("**Meta %**")
-            cols_head[3].markdown("**P. Médio**")
-            cols_head[4].markdown("**Divs (R$)**")
+            cols_head[2].markdown("**Meta%**")
+            cols_head[3].markdown("**PM**")
+            cols_head[4].markdown("**Divs**")
+            cols_head[5].markdown("**🎯 Teto (Alert)**") # NOVO
             
             for t in list(carteira_exibicao.keys()):
-                cols = st.columns([1, 1, 1, 1, 1, 0.5])
+                cols = st.columns([1, 0.8, 0.8, 1, 1, 1, 0.5])
                 cols[0].write(f"**{t}**")
+                
                 nq = cols[1].number_input(f"Q_{t}", value=int(carteira_completa[t]['qtde']), min_value=0, step=1, key=f"q_{t}", label_visibility="collapsed")
                 nm = cols[2].number_input(f"M_{t}", value=int(carteira_completa[t]['meta_pct']), min_value=0, step=1, key=f"m_{t}", label_visibility="collapsed")
                 np = cols[3].number_input(f"P_{t}", value=float(carteira_completa[t].get('pm',0)), min_value=0.0, step=0.01, format="%.2f", key=f"p_{t}", label_visibility="collapsed")
                 nd = cols[4].number_input(f"D_{t}", value=float(carteira_completa[t].get('divs',0)), min_value=0.0, step=0.01, format="%.2f", key=f"d_{t}", label_visibility="collapsed")
-                if cols[5].button("🗑️", key=f"del_{t}"): remover_lista.append(t); mudou_algo=True
-                if nq!=carteira_completa[t]['qtde'] or nm!=carteira_completa[t]['meta_pct'] or np!=carteira_completa[t].get('pm',0) or nd!=carteira_completa[t].get('divs',0):
-                    carteira_completa[t].update({'qtde':nq, 'meta_pct':nm, 'pm':np, 'divs':nd})
+                # NOVO CAMPO TETO
+                nt = cols[5].number_input(f"T_{t}", value=float(carteira_completa[t].get('teto',0)), min_value=0.0, step=0.01, format="%.2f", key=f"t_{t}", label_visibility="collapsed", help="Se o preço cair abaixo disso, o robô avisa!")
+
+                if cols[6].button("🗑️", key=f"del_{t}"): remover_lista.append(t); mudou_algo=True
+                
+                # Atualização
+                if (nq!=carteira_completa[t]['qtde'] or nm!=carteira_completa[t]['meta_pct'] or 
+                    np!=carteira_completa[t].get('pm',0) or nd!=carteira_completa[t].get('divs',0) or 
+                    nt!=carteira_completa[t].get('teto',0)):
+                    
+                    carteira_completa[t].update({'qtde':nq, 'meta_pct':nm, 'pm':np, 'divs':nd, 'teto':nt})
                     mudou_algo=True
+            
             if remover_lista:
                 for t in remover_lista: del carteira_completa[t]
                 salvar_carteira(carteira_completa); st.session_state['carteira_cache'] = carteira_completa; st.rerun()
@@ -297,7 +306,7 @@ if check_password():
         # --- DASHBOARD ---
         if executar or modo_live:
             if carteira_exibicao:
-                with st.spinner("Analisando Mercado..."):
+                with st.spinner("Varrendo o Mercado..."):
                     df = pd.DataFrame.from_dict(carteira_exibicao, orient='index')
                     precos = {}
                     for t in df.index: precos[t] = obter_preco_atual(t)
@@ -305,6 +314,19 @@ if check_password():
                     df = df[df['preco_atual'] > 0]
 
                     if not df.empty:
+                        # --- LÓGICA DO SNIPER (ALERTA DE PREÇO) ---
+                        oportunidades = []
+                        for t in df.index:
+                            preco = df.loc[t, 'preco_atual']
+                            teto = df.loc[t, 'teto']
+                            if teto > 0 and preco <= teto:
+                                oportunidades.append(f"{t}: R$ {preco:.2f} (Abaixo de R$ {teto:.2f})")
+                        
+                        if oportunidades:
+                            st.toast(f"🚨 {len(oportunidades)} Oportunidades Detectadas!", icon="🔥")
+                            st.warning(f"### 🔥 ALERTA DE COMPRA (PREÇO TETO ATINGIDO):\n" + "\n".join([f"- {op}" for op in oportunidades]))
+
+                        # --- CÁLCULOS NORMAIS ---
                         df['total_atual'] = df['qtde'] * df['preco_atual']
                         df['total_inv'] = df['qtde'] * df['pm']
                         df['lucro_cota'] = df['total_atual'] - df['total_inv']
@@ -328,12 +350,7 @@ if check_password():
 
                         st.divider()
 
-                        g1, g2 = st.columns(2)
-                        with g1: st.plotly_chart(px.pie(df_fim, values='total_atual', names=df_fim.index, title="Por Ativo", hole=0.5), use_container_width=True)
-                        with g2: 
-                            df_s = df_fim.groupby('setor')['total_atual'].sum().reset_index()
-                            st.plotly_chart(px.pie(df_s, values='total_atual', names='setor', title="Por Setor", hole=0.5), use_container_width=True)
-                        
+                        # --- LISTA DE COMPRAS ---
                         st.subheader("🛒 Ordem de Compra")
                         compra = df_fim[df_fim['comprar_qtd']>0].sort_values('custo_total', ascending=False)
                         if not compra.empty:
@@ -341,9 +358,9 @@ if check_password():
                         else: st.success("Aguarde! Nenhuma compra necessária.")
 
                         st.divider()
-                        st.subheader("🔎 Detalhes Interativos")
+                        st.subheader("🔎 Detalhes Interativos (com Alertas)")
                         
-                        cols = ['link_analise', 'qtde','pm','preco_atual','divs','lucro_real','rentab_pct', 'yoc_pct']
+                        cols = ['link_analise', 'qtde','pm','preco_atual', 'teto', 'divs','lucro_real','rentab_pct', 'yoc_pct']
                         df_show = df_fim[cols].sort_values('rentab_pct', ascending=False)
                         
                         st.dataframe(
@@ -352,6 +369,7 @@ if check_password():
                                 "link_analise": st.column_config.LinkColumn("Analisar", display_text="Ver no Inv10"),
                                 "pm": st.column_config.NumberColumn("PM", format="R$ %.2f"),
                                 "preco_atual": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
+                                "teto": st.column_config.NumberColumn("🎯 Teto", format="R$ %.2f"), # NOVO
                                 "divs": st.column_config.NumberColumn("Divs", format="R$ %.2f"),
                                 "lucro_real": st.column_config.NumberColumn("Lucro", format="R$ %.2f"),
                                 "rentab_pct": st.column_config.NumberColumn("% Ret", format="%.1f%%"),
@@ -361,7 +379,7 @@ if check_password():
                             hide_index=False
                         )
 
-                        # --- SIMULADOR BOLA DE NEVE (VERSÃO 9.9 - BLINDADA) ---
+                        # --- SIMULADOR BOLA DE NEVE (BLINDADO) ---
                         st.divider()
                         with st.expander("🔮 Simulador Bola de Neve (O Futuro)", expanded=False):
                             st.caption("Veja o poder dos juros compostos com seu aporte mensal atual.")
@@ -388,19 +406,14 @@ if check_password():
                             
                             st.metric(f"Patrimônio em {anos} anos", f"R$ {total:,.2f}", delta=f"Lucro de R$ {total - total_investido:,.2f}")
                             
-                            # --- GRÁFICO MANUAL COM PROTEÇÃO DE ERRO ---
                             try:
                                 fig_ev = go.Figure()
-                                fig_ev.add_trace(go.Scatter(
-                                    x=df_ev['Ano'], y=df_ev['Total Investido'], fill='tozeroy', mode='lines', name='Saiu do Bolso', line=dict(color='#808080')
-                                ))
-                                fig_ev.add_trace(go.Scatter(
-                                    x=df_ev['Ano'], y=df_ev['Total Acumulado'], fill='tonexty', mode='lines', name='Com Juros', line=dict(color='#00cc96')
-                                ))
+                                fig_ev.add_trace(go.Scatter(x=df_ev['Ano'], y=df_ev['Total Investido'], fill='tozeroy', mode='lines', name='Saiu do Bolso', line=dict(color='#808080')))
+                                fig_ev.add_trace(go.Scatter(x=df_ev['Ano'], y=df_ev['Total Acumulado'], fill='tonexty', mode='lines', name='Com Juros', line=dict(color='#00cc96')))
                                 fig_ev.update_layout(title="Curva Exponencial de Riqueza", xaxis_title="Anos", yaxis_title="Patrimônio (R$)")
                                 st.plotly_chart(fig_ev, use_container_width=True)
                             except Exception as e:
-                                st.warning("Não foi possível gerar o gráfico visualmente, mas aqui estão os dados:")
+                                st.warning("Erro visual no gráfico (não afeta os cálculos).")
                                 st.dataframe(df_ev)
 
             else: st.info("Filtro vazio.")
@@ -437,7 +450,7 @@ if check_password():
             if mod != "...":
                 novos = CARTEIRAS_PRONTAS[mod]
                 for t, m in novos.items():
-                    if t not in carteira_completa: carteira_completa[t] = {'qtde':0, 'meta_pct':m, 'pm':0.0, 'divs':0.0}
+                    if t not in carteira_completa: carteira_completa[t] = {'qtde':0, 'meta_pct':m, 'pm':0.0, 'divs':0.0, 'teto':0.0}
                 salvar_carteira(carteira_completa)
                 st.session_state['carteira_cache'] = carteira_completa
                 st.toast("Modelo aplicado!")
