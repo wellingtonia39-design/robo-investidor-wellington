@@ -10,7 +10,7 @@ import os
 import math
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 9.6", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="Robô Investidor Pro 9.7", layout="wide", page_icon="🦅")
 
 # --- CONSTANTES ---
 NOME_PLANILHA_GOOGLE = "carteira_robo_db"
@@ -353,7 +353,7 @@ if check_password():
                             hide_index=False
                         )
 
-                        # --- SIMULADOR BOLA DE NEVE (CORRIGIDO) ---
+                        # --- SIMULADOR BOLA DE NEVE (CORRIGIDO V9.7) ---
                         st.divider()
                         with st.expander("🔮 Simulador Bola de Neve (O Futuro)", expanded=False):
                             st.caption("Veja o poder dos juros compostos com seu aporte mensal atual.")
@@ -380,12 +380,13 @@ if check_password():
                             
                             st.metric(f"Patrimônio em {anos} anos", f"R$ {total:,.2f}", delta=f"Lucro de R$ {total - total_investido:,.2f}")
                             
-                            # --- CORREÇÃO DO GRÁFICO ---
-                            # Transforma de "Largo" para "Longo" para o Plotly não bugar
+                            # SOLUÇÃO ROBUSTA: Usar Gráfico de Linha Preenchida
                             df_long = df_ev.melt(id_vars=["Ano"], value_vars=["Total Investido", "Total Acumulado"], var_name="Tipo", value_name="Reais")
                             
-                            fig_ev = px.area(df_long, x="Ano", y="Reais", color="Tipo",
+                            fig_ev = px.line(df_long, x="Ano", y="Reais", color="Tipo",
                                              title="Curva Exponencial de Riqueza", color_discrete_sequence=["#gray", "#00cc96"])
+                            fig_ev.update_traces(fill='tozeroy') # Preenche para parecer área
+                            
                             st.plotly_chart(fig_ev, use_container_width=True)
 
             else: st.info("Filtro vazio.")
