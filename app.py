@@ -9,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import os
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 9.1", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="Robô Investidor Pro 9.2", layout="wide", page_icon="🦅")
 
 # --- NOME DA PLANILHA NO GOOGLE ---
 NOME_PLANILHA_GOOGLE = "carteira_robo_db"
@@ -27,11 +27,20 @@ SETORES = {
     "DIRR3": "Construção", "POMO4": "Indústria", "RECV3": "Petróleo"
 }
 
-# --- CARTEIRAS RECOMENDADAS ---
+# --- TODAS AS CARTEIRAS DE VOLTA ---
 CARTEIRAS_PRONTAS = {
     "🏆 Carteira Recomendada IA": {
         "WEGE3": 10, "ITUB4": 15, "VALE3": 10, "TAEE11": 10, "PSSA3": 5, 
         "IVVB11": 20, "HGLG11": 10, "KNCR11": 10, "MXRF11": 10
+    },
+    "Carteira Dividendos (Rico)": {
+        "CURY3": 10, "CXSE3": 10, "DIRR3": 10, "ITSA4": 10, 
+        "ITUB4": 10, "PETR4": 10, "POMO4": 10, "RECV3": 10, "VALE3": 10
+    },
+    "Carteira FIIs (Rico)": {
+        "XPML11": 10, "RBRR11": 10, "RBRX11": 9, "XPCI11": 9,
+        "BTLG11": 6, "LVBI11": 6, "PCIP11": 6, "PVBI11": 6,
+        "KNCR11": 5, "BRCO11": 5, "XPLG11": 4, "KNSC11": 1
     }
 }
 
@@ -49,7 +58,7 @@ def conectar_google_sheets():
         st.error(f"Erro ao conectar no Google: {e}")
         return None
 
-# --- CARREGAR DADOS (DA NUVEM) ---
+# --- CARREGAR DADOS ---
 def carregar_carteira():
     sheet = conectar_google_sheets()
     if sheet:
@@ -58,33 +67,22 @@ def carregar_carteira():
             carteira = {}
             for linha in dados:
                 t = linha['Ticker']
-                # Tratamento de erro para valores vazios ou texto
                 qtde = linha['Qtd'] if linha['Qtd'] != '' else 0
                 meta = linha['Meta'] if linha['Meta'] != '' else 0
-                
-                # Conversão segura de string para float (vírgula por ponto)
                 try: pm = float(str(linha['PM']).replace(',', '.'))
                 except: pm = 0.0
-                
                 try: divs = float(str(linha['Divs']).replace(',', '.'))
                 except: divs = 0.0
-
-                carteira[t] = {
-                    'qtde': qtde,
-                    'meta_pct': meta,
-                    'pm': pm,
-                    'divs': divs
-                }
+                carteira[t] = {'qtde': qtde, 'meta_pct': meta, 'pm': pm, 'divs': divs}
             return carteira
         except: return {}
     return {}
 
-# --- SALVAR DADOS (NA NUVEM) ---
+# --- SALVAR DADOS ---
 def salvar_carteira(carteira):
     sheet = conectar_google_sheets()
     if sheet:
-        linhas = []
-        linhas.append(["Ticker", "Qtd", "Meta", "PM", "Divs"]) # Cabeçalho
+        linhas = [["Ticker", "Qtd", "Meta", "PM", "Divs"]]
         for t, dados in carteira.items():
             linhas.append([
                 t, 
@@ -96,7 +94,7 @@ def salvar_carteira(carteira):
         sheet.clear()
         sheet.update(linhas)
 
-# --- CONFIGURAÇÕES LOCAIS (Senha/Meta) ---
+# --- CONFIGURAÇÕES LOCAIS ---
 def carregar_config():
     padrao = {"senha": "123456", "meta_mensal": 1000.00}
     if os.path.exists(ARQUIVO_CONFIG):
@@ -123,7 +121,7 @@ def obter_preco_atual(ticker):
 def obter_setor(ticker):
     return SETORES.get(ticker.replace(".SA","").strip(), "Outros")
 
-# --- CÁLCULO INTELIGENTE ---
+# --- CÁLCULO ---
 def calcular_compras(df, aporte):
     caixa = aporte
     df = df.copy()
@@ -163,7 +161,6 @@ def check_password():
 if check_password():
     conf = carregar_config()
     
-    # --- SIDEBAR ---
     with st.sidebar:
         st.title("🦅 Painel Cloud")
         menu = st.radio("Navegação", ["🏠 Minha Carteira", "⚙️ Configurações"])
@@ -173,8 +170,6 @@ if check_password():
         st.divider()
         modo_live = st.toggle("🔄 Modo Live (60s)")
 
-    # --- CARREGAMENTO INICIAL ---
-    # Só carrega do Google se não tiver nada na memória ou se forçar recarga
     if 'carteira_cache' not in st.session_state:
         with st.spinner("Baixando dados do Google Sheets..."):
             st.session_state['carteira_cache'] = carregar_carteira()
@@ -186,9 +181,8 @@ if check_password():
 
         if not carteira: st.warning("Carteira vazia no Google Sheets.")
 
-        # --- PAINEL LIBERDADE ---
         patrimonio_est = sum([d['qtde'] * d.get('pm', 0) for d in carteira.values()])
-        renda_est = patrimonio_est * 0.007 # 0.7% ao mês
+        renda_est = patrimonio_est * 0.007 
         meta = conf['meta_mensal']
         progresso = min(renda_est / meta, 1.0) if meta > 0 else 0
         
@@ -199,20 +193,19 @@ if check_password():
         with c_meta2: st.metric("Concluído", f"{progresso*100:.1f}%")
         st.divider()
 
-        # --- INPUT APORTE ---
         c1, c2 = st.columns([1, 2])
         aporte = c1.number_input("💰 Aporte (R$)", value=1000.00, step=100.0)
         c2.write(""); c2.write("")
         executar = c2.button("🚀 Analisar Carteira", type="primary")
 
         # --- EDIÇÃO / SYNC GOOGLE ---
-        with st.expander("📝 Editar Ativos (Sincroniza com Google)"):
+        with st.expander("📝 Editar Ativos (Sincroniza com Google)", expanded=True):
             add = st.text_input("Novo Ticker (ex: BBAS3)")
             if st.button("Adicionar") and add:
                 t = add.upper().strip().replace(".SA","")
                 if t not in carteira: 
                     carteira[t]={'qtde':0,'meta_pct':10,'pm':0.0,'divs':0.0}
-                    salvar_carteira(carteira) # Salva no Google
+                    salvar_carteira(carteira) 
                     st.session_state['carteira_cache'] = carteira
                     st.rerun()
 
@@ -220,13 +213,23 @@ if check_password():
             mudou_algo = False
             remover_lista = []
             
+            # CABEÇALHO CLARO
+            cols_head = st.columns([1, 1, 1, 1, 1, 0.5])
+            cols_head[0].markdown("**Ativo**")
+            cols_head[1].markdown("**Qtd**")
+            cols_head[2].markdown("**Meta %**")
+            cols_head[3].markdown("**P. Médio**")
+            cols_head[4].markdown("**Divs (R$)**")
+            
             for t in list(carteira.keys()):
                 cols = st.columns([1, 1, 1, 1, 1, 0.5])
                 cols[0].write(f"**{t}**")
-                nq = cols[1].number_input(f"Q", int(carteira[t]['qtde']), key=f"q_{t}", label_visibility="collapsed")
-                nm = cols[2].number_input(f"M%", int(carteira[t]['meta_pct']), key=f"m_{t}", label_visibility="collapsed")
-                np = cols[3].number_input(f"PM", float(carteira[t].get('pm',0)), key=f"p_{t}", label_visibility="collapsed")
-                nd = cols[4].number_input(f"Divs", float(carteira[t].get('divs',0)), key=f"d_{t}", label_visibility="collapsed")
+                
+                # Campos com min_value=0 para evitar erros
+                nq = cols[1].number_input(f"Q_{t}", value=int(carteira[t]['qtde']), min_value=0, step=1, key=f"q_{t}", label_visibility="collapsed")
+                nm = cols[2].number_input(f"M_{t}", value=int(carteira[t]['meta_pct']), min_value=0, step=1, key=f"m_{t}", label_visibility="collapsed")
+                np = cols[3].number_input(f"P_{t}", value=float(carteira[t].get('pm',0)), min_value=0.0, step=0.01, format="%.2f", key=f"p_{t}", label_visibility="collapsed")
+                nd = cols[4].number_input(f"D_{t}", value=float(carteira[t].get('divs',0)), min_value=0.0, step=0.01, format="%.2f", key=f"d_{t}", label_visibility="collapsed")
                 
                 if cols[5].button("🗑️", key=f"del_{t}"): remover_lista.append(t); mudou_algo=True
 
@@ -239,10 +242,9 @@ if check_password():
                 salvar_carteira(carteira); st.session_state['carteira_cache'] = carteira; st.rerun()
             
             if mudou_algo: 
-                salvar_carteira(carteira) # Envia pro Google
+                salvar_carteira(carteira)
                 st.session_state['carteira_cache'] = carteira
 
-        # --- DASHBOARD E CÁLCULOS ---
         if executar or modo_live:
             if carteira:
                 with st.spinner("Analisando Mercado..."):
@@ -253,7 +255,6 @@ if check_password():
                     df = df[df['preco_atual'] > 0]
 
                     if not df.empty:
-                        # Cálculos Completos
                         df['total_atual'] = df['qtde'] * df['preco_atual']
                         df['total_inv'] = df['qtde'] * df['pm']
                         df['lucro_cota'] = df['total_atual'] - df['total_inv']
@@ -264,7 +265,6 @@ if check_password():
 
                         df_fim, sobra = calcular_compras(df, aporte)
                         
-                        # Métricas
                         k1, k2, k3, k4 = st.columns(4)
                         patr = df_fim['total_atual'].sum()
                         lucro = df_fim['lucro_real'].sum()
@@ -275,21 +275,18 @@ if check_password():
 
                         st.divider()
 
-                        # Gráficos
                         g1, g2 = st.columns(2)
                         with g1: st.plotly_chart(px.pie(df_fim, values='total_atual', names=df_fim.index, title="Por Ativo", hole=0.5), use_container_width=True)
                         with g2: 
                             df_s = df_fim.groupby('setor')['total_atual'].sum().reset_index()
                             st.plotly_chart(px.pie(df_s, values='total_atual', names='setor', title="Por Setor", hole=0.5), use_container_width=True)
                         
-                        # Lista de Compras
                         st.subheader("🛒 Ordem de Compra")
                         compra = df_fim[df_fim['comprar_qtd']>0].sort_values('custo_total', ascending=False)
                         if not compra.empty:
                             st.dataframe(compra[['preco_atual','meta_pct','comprar_qtd','custo_total']].style.format({'preco_atual':'R$ {:.2f}','custo_total':'R$ {:.2f}','meta_pct':'{:.0f}%'}), use_container_width=True)
                         else: st.success("Aguarde! Nenhuma compra necessária.")
 
-                        # Tabela Detalhada
                         st.divider()
                         with st.expander("🔎 Detalhes (Yield on Cost, Rentabilidade)"):
                             cols = ['qtde','pm','preco_atual','divs','lucro_real','rentab_pct', 'yoc_pct']
