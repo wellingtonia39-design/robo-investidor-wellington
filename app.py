@@ -7,9 +7,10 @@ import plotly.express as px
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
+import math # Nova biblioteca para cálculos financeiros
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 9.4", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="Robô Investidor Pro 9.5", layout="wide", page_icon="🦅")
 
 # --- CONSTANTES ---
 NOME_PLANILHA_GOOGLE = "carteira_robo_db"
@@ -51,30 +52,25 @@ def conectar_google_sheets():
         creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # Abre o arquivo da planilha
         sh = client.open(NOME_PLANILHA_GOOGLE)
         return sh
     except Exception as e:
         st.error(f"Erro ao conectar no Google: {e}")
         return None
 
-# --- GERENCIAMENTO DE ABAS (CARTEIRA E CONFIG) ---
+# --- GERENCIAMENTO DE ABAS ---
 def pegar_aba_carteira(sh):
-    # Tenta pegar a primeira aba, ou cria se não existir
     try: return sh.get_worksheet(0)
     except: return sh.add_worksheet(title="Carteira", rows=100, cols=10)
 
 def pegar_aba_config(sh):
-    # Tenta pegar aba 'Config', se não existir, cria
-    try: 
-        ws = sh.worksheet("Config")
-        return ws
+    try: return sh.worksheet("Config")
     except: 
         ws = sh.add_worksheet(title="Config", rows=5, cols=5)
-        ws.update([["Senha", "MetaMensal"], ["123456", 1000.0]]) # Valor Inicial
+        ws.update([["Senha", "MetaMensal"], ["123456", 1000.0]])
         return ws
 
-# --- CARREGAR/SALVAR CARTEIRA ---
+# --- CARREGAR/SALVAR ---
 def carregar_carteira():
     sh = conectar_google_sheets()
     if sh:
@@ -106,7 +102,6 @@ def salvar_carteira(carteira):
         ws.clear()
         ws.update(linhas)
 
-# --- CARREGAR/SALVAR CONFIGURAÇÕES (AGORA NA NUVEM) ---
 def carregar_config():
     padrao = {"senha": "123456", "meta_mensal": 1000.00}
     sh = conectar_google_sheets()
@@ -115,7 +110,6 @@ def carregar_config():
             ws = pegar_aba_config(sh)
             dados = ws.get_all_records()
             if dados:
-                # Pega a primeira linha de dados
                 return {
                     "senha": str(dados[0]['Senha']),
                     "meta_mensal": float(str(dados[0]['MetaMensal']).replace(',', '.'))
@@ -145,6 +139,11 @@ def obter_preco_atual(ticker):
 def obter_setor(ticker):
     return SETORES.get(ticker.replace(".SA","").strip(), "Outros")
 
+def obter_link_investidor10(ticker):
+    # Gera link dinâmico para análise
+    tipo = "fundos-imobiliarios" if "11" in ticker else "acoes"
+    return f"https://investidor10.com.br/{tipo}/{ticker.lower()}/"
+
 # --- CÁLCULO ---
 def calcular_compras(df, aporte):
     caixa = aporte
@@ -168,9 +167,7 @@ def calcular_compras(df, aporte):
 
 # --- LOGIN ---
 def check_password():
-    # Carrega config da nuvem na hora do login
-    if 'config_cache' not in st.session_state:
-        st.session_state['config_cache'] = carregar_config()
+    if 'config_cache' not in st.session_state: st.session_state['config_cache'] = carregar_config()
     conf = st.session_state['config_cache']
 
     if 'logado' not in st.session_state: st.session_state['logado'] = False
@@ -235,7 +232,7 @@ if check_password():
 
         # --- CÁLCULO DE LIBERDADE ---
         patrimonio_est = sum([d['qtde'] * d.get('pm', 0) for d in carteira_exibicao.values()])
-        renda_est_mensal = patrimonio_est * 0.007 # 0.7% a.m (estimativa base)
+        renda_est_mensal = patrimonio_est * 0.007 
         meta = conf['meta_mensal']
         progresso = min(renda_est_mensal / meta, 1.0) if meta > 0 else 0
         
@@ -280,18 +277,15 @@ if check_password():
                 nm = cols[2].number_input(f"M_{t}", value=int(carteira_completa[t]['meta_pct']), min_value=0, step=1, key=f"m_{t}", label_visibility="collapsed")
                 np = cols[3].number_input(f"P_{t}", value=float(carteira_completa[t].get('pm',0)), min_value=0.0, step=0.01, format="%.2f", key=f"p_{t}", label_visibility="collapsed")
                 nd = cols[4].number_input(f"D_{t}", value=float(carteira_completa[t].get('divs',0)), min_value=0.0, step=0.01, format="%.2f", key=f"d_{t}", label_visibility="collapsed")
-                
                 if cols[5].button("🗑️", key=f"del_{t}"): remover_lista.append(t); mudou_algo=True
                 if nq!=carteira_completa[t]['qtde'] or nm!=carteira_completa[t]['meta_pct'] or np!=carteira_completa[t].get('pm',0) or nd!=carteira_completa[t].get('divs',0):
                     carteira_completa[t].update({'qtde':nq, 'meta_pct':nm, 'pm':np, 'divs':nd})
                     mudou_algo=True
-            
             if remover_lista:
                 for t in remover_lista: del carteira_completa[t]
                 salvar_carteira(carteira_completa); st.session_state['carteira_cache'] = carteira_completa; st.rerun()
             if mudou_algo: 
-                salvar_carteira(carteira_completa)
-                st.session_state['carteira_cache'] = carteira_completa
+                salvar_carteira(carteira_completa); st.session_state['carteira_cache'] = carteira_completa
 
         # --- DASHBOARD ---
         if executar or modo_live:
@@ -311,14 +305,12 @@ if check_password():
                         df['rentab_pct'] = df.apply(lambda x: (x['lucro_real']/x['total_inv'])*100 if x['total_inv']>0 else 0, axis=1)
                         df['yoc_pct'] = df.apply(lambda x: (x['divs']/x['total_inv'])*100 if x['total_inv']>0 else 0, axis=1)
                         df['setor'] = df.index.map(obter_setor)
+                        df['link_analise'] = df.index.map(obter_link_investidor10) # Link novo
 
                         df_fim, sobra = calcular_compras(df, aporte)
                         
                         patr = df_fim['total_atual'].sum()
                         lucro = df_fim['lucro_real'].sum()
-                        
-                        # --- PROJEÇÃO DE RENDA (NOVO!) ---
-                        # Estimativa conservadora de 8% a.a. sobre o patrimônio total
                         projecao_anual = patr * 0.08 
                         
                         k1, k2, k3, k4 = st.columns(4)
@@ -342,14 +334,64 @@ if check_password():
                         else: st.success("Aguarde! Nenhuma compra necessária.")
 
                         st.divider()
-                        with st.expander("🔎 Detalhes (Yield on Cost, Rentabilidade)"):
-                            cols = ['qtde','pm','preco_atual','divs','lucro_real','rentab_pct', 'yoc_pct']
-                            st.dataframe(df_fim[cols].sort_values('rentab_pct', ascending=False)
-                                         .style.format({'pm':'R$ {:.2f}','preco_atual':'R$ {:.2f}','divs':'R$ {:.2f}','lucro_real':'R$ {:.2f}','rentab_pct':'{:.1f}%','yoc_pct':'{:.1f}%'})
-                                         .applymap(lambda x: 'color: green' if x>0 else 'color: red', subset=['lucro_real','rentab_pct']), use_container_width=True)
+                        st.subheader("🔎 Detalhes Interativos")
+                        
+                        # --- TABELA INTERATIVA COM LINKS ---
+                        cols = ['link_analise', 'qtde','pm','preco_atual','divs','lucro_real','rentab_pct', 'yoc_pct']
+                        df_show = df_fim[cols].sort_values('rentab_pct', ascending=False)
+                        
+                        st.dataframe(
+                            df_show,
+                            column_config={
+                                "link_analise": st.column_config.LinkColumn("Analisar", display_text="Ver no Inv10"),
+                                "pm": st.column_config.NumberColumn("PM", format="R$ %.2f"),
+                                "preco_atual": st.column_config.NumberColumn("Preço", format="R$ %.2f"),
+                                "divs": st.column_config.NumberColumn("Divs", format="R$ %.2f"),
+                                "lucro_real": st.column_config.NumberColumn("Lucro", format="R$ %.2f"),
+                                "rentab_pct": st.column_config.NumberColumn("% Ret", format="%.1f%%"),
+                                "yoc_pct": st.column_config.NumberColumn("% YoC", format="%.1f%%"),
+                            },
+                            use_container_width=True,
+                            hide_index=False
+                        )
+
+                        # --- SIMULADOR BOLA DE NEVE ---
+                        st.divider()
+                        with st.expander("🔮 Simulador Bola de Neve (O Futuro)", expanded=False):
+                            st.caption("Veja o poder dos juros compostos com seu aporte mensal atual.")
+                            col_sim1, col_sim2, col_sim3 = st.columns(3)
+                            anos = col_sim1.slider("Anos investindo", 1, 30, 10)
+                            taxa_anual = col_sim2.number_input("Taxa Anual Média (%)", value=10.0, step=0.5)
+                            aporte_sim = col_sim3.number_input("Aporte Mensal (R$)", value=float(aporte), step=100.0)
+                            
+                            taxa_mensal = (1 + taxa_anual/100)**(1/12) - 1
+                            meses = anos * 12
+                            
+                            # Cálculo mês a mês
+                            evolucao = []
+                            total = patr # Começa com o patrimônio atual
+                            total_investido = patr
+                            
+                            for m in range(meses):
+                                total = total * (1 + taxa_mensal) + aporte_sim
+                                total_investido += aporte_sim
+                                if m % 12 == 0: # Registra ano a ano para o gráfico não ficar pesado
+                                    evolucao.append({"Ano": (m//12)+1, "Total Acumulado": total, "Total Investido": total_investido})
+                            
+                            # Último mês
+                            evolucao.append({"Ano": anos, "Total Acumulado": total, "Total Investido": total_investido})
+                            
+                            df_ev = pd.DataFrame(evolucao)
+                            
+                            st.metric(f"Patrimônio em {anos} anos", f"R$ {total:,.2f}", delta=f"Lucro de R$ {total - total_investido:,.2f}")
+                            
+                            fig_ev = px.area(df_ev, x="Ano", y=["Total Investido", "Total Acumulado"], 
+                                             title="Curva Exponencial de Riqueza", color_discrete_sequence=["#gray", "#00cc96"])
+                            st.plotly_chart(fig_ev, use_container_width=True)
+
             else: st.info("Filtro vazio.")
 
-    # ================= TELA: CONFIGURAÇÕES (AGORA SALVA NA NUVEM) =================
+    # ================= TELA: CONFIGURAÇÕES =================
     elif menu == "⚙️ Configurações":
         st.title("Configurações (Nuvem ☁️)")
         
@@ -357,7 +399,7 @@ if check_password():
         nm = st.number_input("Renda Passiva Desejada (R$)", value=float(conf['meta_mensal']))
         if nm != conf['meta_mensal']:
             conf['meta_mensal'] = nm
-            salvar_config(conf) # Salva no Google
+            salvar_config(conf) 
             st.session_state['config_cache'] = conf
             st.success("Meta Salva na Nuvem!")
 
@@ -369,9 +411,9 @@ if check_password():
         if st.button("Salvar Senha"):
             if s1 == s2 and len(s1)>3:
                 conf['senha'] = s1
-                salvar_config(conf) # Salva no Google
+                salvar_config(conf)
                 st.session_state['config_cache'] = conf
-                st.success("Senha atualizada na Nuvem! Faça login novamente.")
+                st.success("Senha atualizada! Faça login novamente.")
                 time.sleep(2); st.session_state['logado']=False; st.rerun()
             else: st.error("Senhas diferentes ou muito curta.")
         
