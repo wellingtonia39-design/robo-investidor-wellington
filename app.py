@@ -6,7 +6,7 @@ import os
 import time
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 5.1", layout="wide", page_icon="🔐")
+st.set_page_config(page_title="Robô Investidor Pro 5.2", layout="wide", page_icon="📡")
 ARQUIVO_DADOS = 'minha_carteira.json'
 
 # --- SENHA DE ACESSO ---
@@ -57,8 +57,8 @@ def carregar_carteira():
         try:
             with open(ARQUIVO_DADOS, 'r') as f:
                 dados = json.load(f)
-                # Garante que todo ativo tenha os campos necessários
                 for ticker in dados:
+                    # Garante compatibilidade com versões antigas
                     if 'pm' not in dados[ticker]: dados[ticker]['pm'] = 0.0
                     if 'qtde' not in dados[ticker]: dados[ticker]['qtde'] = 0
                     if 'meta_pct' not in dados[ticker]: dados[ticker]['meta_pct'] = 0
@@ -84,22 +84,19 @@ def obter_preco_atual(ticker):
     except: return 0.0
     return 0.0
 
-# --- CÁLCULO ---
+# --- CÁLCULO INTELIGENTE ---
 def calcular_compras(df, aporte):
     caixa = aporte
     df = df.copy()
     df['comprar_qtd'] = 0
     df['custo_total'] = 0.0
     
-    # Evita loop infinito se não houver metas
-    if df['meta_pct'].sum() == 0:
-        return df, caixa
+    if df['meta_pct'].sum() == 0: return df, caixa
 
     while caixa > 0:
         patrimonio_sim = (df['qtde'] * df['preco_atual']).sum() + \
                          (df['comprar_qtd'] * df['preco_atual']).sum() + caixa
         
-        # Evita divisão por zero
         if patrimonio_sim == 0: break
 
         df['pct_sim'] = ((df['qtde'] + df['comprar_qtd']) * df['preco_atual'] / patrimonio_sim) * 100
@@ -122,23 +119,19 @@ def calcular_compras(df, aporte):
 # ==========================================
 
 if check_password():
-    # --- CABEÇALHO ---
-    st.title("🤖 Robô Investidor Pro 5.1")
-    st.caption(f"Usuário Logado | Acesso Seguro | Carteira Inteligente")
+    st.title("🤖 Robô Investidor Pro 5.2")
+    st.caption(f"Usuário Logado | Acesso Seguro | Atualização Automática")
 
     carteira = carregar_carteira()
 
     # --- BARRA LATERAL ---
     with st.sidebar:
         st.header("⚙️ Gestão")
-        
         if st.button("🔒 Sair / Logout"):
             st.session_state['logado'] = False
             st.rerun()
             
         st.divider()
-        
-        # IMPORTAR CARTEIRA
         st.subheader("Importar Estratégia")
         modelo = st.selectbox("Escolha um modelo:", ["Selecionar..."] + list(CARTEIRAS_PRONTAS.keys()))
         
@@ -156,33 +149,24 @@ if check_password():
                 st.rerun()
 
         st.divider()
-        
-        # MEUS ATIVOS (CORRIGIDO AQUI)
         st.subheader("Meus Ativos")
         remover = []
         mudou = False
         
-        if not carteira:
-            st.info("Nenhum ativo cadastrado.")
+        if not carteira: st.info("Nenhum ativo cadastrado.")
 
         for t in list(carteira.keys()):
             with st.expander(t, expanded=False):
                 c1, c2 = st.columns(2)
-                
-                # AQUI ESTAVA O ERRO: Agora usamos argumentos nomeados (value=...)
                 nq = c1.number_input(f"Qtd", value=int(carteira[t]['qtde']), min_value=0, step=1, key=f"q_{t}")
                 nm = c2.number_input(f"Meta %", value=int(carteira[t]['meta_pct']), min_value=0, max_value=100, step=1, key=f"m_{t}")
                 pm = st.number_input(f"PM (R$)", value=float(carteira[t].get('pm', 0.0)), min_value=0.0, step=0.01, format="%.2f", key=f"p_{t}")
                 
                 if st.button("Excluir", key=f"d_{t}"): 
-                    remover.append(t)
-                    mudou = True
+                    remover.append(t); mudou = True
                 
-                # Verifica mudanças
-                if nq != carteira[t]['qtde'] or nm != carteira[t]['meta_pct'] or pm != carteira[t].get('pm', 0.0):
-                    carteira[t]['qtde'] = nq
-                    carteira[t]['meta_pct'] = nm
-                    carteira[t]['pm'] = pm
+                if nq!=carteira[t]['qtde'] or nm!=carteira[t]['meta_pct'] or pm!=carteira[t].get('pm',0.0):
+                    carteira[t].update({'qtde':nq, 'meta_pct':nm, 'pm':pm})
                     mudou = True
         
         if remover:
@@ -200,39 +184,50 @@ if check_password():
                     carteira[t] = {'qtde':0, 'meta_pct':10, 'pm':0.0}
                     salvar_carteira(carteira)
                     st.rerun()
+        
+        # --- MODO LIVE ---
+        st.divider()
+        modo_live = st.toggle("🔄 Modo Live (Atualizar a cada 60s)")
 
     # --- CORPO PRINCIPAL ---
     c1, c2 = st.columns([1, 2])
     aporte = c1.number_input("💰 Aporte (R$)", value=1000.00, step=100.0)
     c2.write(""); c2.write("")
     
-    if c2.button("🚀 Analisar Carteira", type="primary"):
+    # Se estiver no modo live, o botão fica 'desabilitado' visualmente pois roda sozinho,
+    # mas mantemos a funcionalidade manual também.
+    executar = c2.button("🚀 Analisar Carteira", type="primary")
+
+    # O código roda se apertar o botão OU se o modo live estiver ligado
+    if executar or modo_live:
         if not carteira: 
             st.warning("Carteira vazia! Adicione ativos na barra lateral.")
         else:
             with st.spinner("Consultando Mercado..."):
                 df = pd.DataFrame.from_dict(carteira, orient='index')
                 precos = {}
-                bar = st.progress(0)
+                
+                # Barra de progresso só aparece se for manual (pra não ficar piscando no live)
+                if not modo_live:
+                    bar = st.progress(0)
                 
                 for i, t in enumerate(df.index):
                     precos[t] = obter_preco_atual(t)
-                    bar.progress((i+1)/len(df))
-                bar.empty()
+                    if not modo_live: bar.progress((i+1)/len(df))
+                
+                if not modo_live: bar.empty()
                 
                 df['preco_atual'] = df.index.map(precos)
-                # Remove ativos sem preço (erro de conexão ou ticker errado)
                 df = df[df['preco_atual'] > 0]
                 
                 if df.empty: 
-                    st.error("Erro total ao obter cotações. Verifique a internet ou os códigos.")
+                    st.error("Erro ao obter cotações. Verifique conexão.")
                 else:
-                    # Lógica de Rentabilidade
+                    # Lógica Financeira
                     df['total_atual'] = df['qtde'] * df['preco_atual']
                     df['total_inv'] = df['qtde'] * df['pm']
                     df['lucro_rs'] = df['total_atual'] - df['total_inv']
                     
-                    # Cálculo seguro do lucro %
                     df['lucro_pct'] = df.apply(
                         lambda x: ((x['preco_atual']/x['pm'])-1)*100 if x['pm'] > 0 else 0.0, axis=1
                     )
@@ -273,5 +268,12 @@ if check_password():
                         
                         csv = compras[['preco_atual','comprar_qtd','custo_total']].to_csv().encode('utf-8')
                         st.download_button("📥 Baixar Excel (CSV)", csv, "compras.csv", "text/csv")
+                    elif modo_live:
+                         st.info("Monitorando mercado... Nenhuma oportunidade nova por enquanto.")
                     else:
                         st.success("Carteira Balanceada! Guarde o dinheiro.")
+
+    # --- LOOP DO MODO LIVE ---
+    if modo_live:
+        time.sleep(60) # Espera 60 segundos
+        st.rerun()     # Recarrega a página
