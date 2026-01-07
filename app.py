@@ -7,7 +7,7 @@ import time
 import plotly.express as px
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 8.0", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="Robô Investidor Pro 8.1", layout="wide", page_icon="🦅")
 ARQUIVO_DADOS = 'minha_carteira.json'
 ARQUIVO_CONFIG = 'config.json'
 
@@ -42,7 +42,7 @@ SETORES = {
     "DIRR3": "Construção", "POMO4": "Indústria", "RECV3": "Petróleo"
 }
 
-# --- GERENCIAMENTO DE CONFIGURAÇÕES (SENHA E META) ---
+# --- GERENCIAMENTO DE CONFIGURAÇÕES ---
 def carregar_config():
     padrao = {"senha": "123456", "meta_mensal": 1000.00}
     if os.path.exists(ARQUIVO_CONFIG):
@@ -135,13 +135,12 @@ if check_password():
     conf = carregar_config()
     carteira = carregar_carteira()
 
-    # --- MENU LATERAL DE NAVEGAÇÃO ---
+    # --- MENU LATERAL ---
     with st.sidebar:
         st.title("🦅 Painel de Controle")
         menu = st.radio("Navegação", ["🏠 Minha Carteira", "⚙️ Configurações"])
-        
+        st.divider()
         if st.button("🔒 Sair"): st.session_state['logado'] = False; st.rerun()
-        
         st.divider()
         modo_live = st.toggle("🔄 Modo Live (60s)")
 
@@ -152,14 +151,13 @@ if check_password():
         st.title("Minha Carteira")
 
         if not carteira:
-            st.warning("Sua carteira está vazia! Vá em 'Configurações' para importar um modelo ou adicione abaixo.")
+            st.warning("Sua carteira está vazia! Vá em 'Configurações' para importar um modelo.")
             
-        # --- PAINEL DA LIBERDADE FINANCEIRA ---
-        # Estimativa simples: Carteira rende média 0.7% ao mês (conservador)
-        patrimonio_estimado = sum([d['qtde'] * d.get('pm', 0) for d in carteira.values()]) # Usa PM se não tiver cotação ainda
+        # --- PAINEL DA LIBERDADE ---
+        patrimonio_estimado = sum([d['qtde'] * d.get('pm', 0) for d in carteira.values()])
         renda_estimada = patrimonio_estimado * 0.007 
         meta = conf['meta_mensal']
-        progresso = min(renda_estimada / meta, 1.0)
+        progresso = min(renda_estimada / meta, 1.0) if meta > 0 else 0
         
         st.container()
         col_meta1, col_meta2 = st.columns([3, 1])
@@ -176,8 +174,8 @@ if check_password():
         c2.write(""); c2.write("")
         executar = c2.button("🚀 Analisar Oportunidades", type="primary")
 
-        # BARRA DE EDIÇÃO RÁPIDA (ADD/REMOVE)
-        with st.expander("📝 Editar Ativos / Adicionar Novo"):
+        # --- ÁREA DE EDIÇÃO (EXPANSÍVEL) ---
+        with st.expander("📝 Editar Quantidades / Metas / Dividendos"):
             add = st.text_input("Adicionar Ticker (ex: KLBN11)")
             if st.button("Adicionar") and add:
                 t = add.upper().strip().replace(".SA","")
@@ -190,14 +188,17 @@ if check_password():
                 cols = st.columns([1, 1, 1, 1, 0.5])
                 cols[0].write(f"**{t}**")
                 nq = cols[1].number_input(f"Qtd", int(carteira[t]['qtde']), key=f"q_{t}", label_visibility="collapsed")
-                nm = cols[2].number_input(f"Meta", int(carteira[t]['meta_pct']), key=f"m_{t}", label_visibility="collapsed")
-                divs = cols[3].number_input(f"Divs", float(carteira[t].get('divs',0)), key=f"d_{t}", label_visibility="collapsed")
+                nm = cols[2].number_input(f"Meta %", int(carteira[t]['meta_pct']), key=f"m_{t}", label_visibility="collapsed")
+                divs = cols[3].number_input(f"Divs R$", float(carteira[t].get('divs',0)), key=f"d_{t}", label_visibility="collapsed")
+                
+                # PM (Preço Médio) agora editável aqui também
+                pm_val = st.number_input(f"PM {t}", float(carteira[t].get('pm',0)), key=f"pm_{t}", label_visibility="collapsed")
+                
                 if cols[4].button("🗑️", key=f"del_{t}"):
                     del carteira[t]; salvar_carteira(carteira); st.rerun()
                 
-                # Atualiza em tempo real
-                if nq!=carteira[t]['qtde'] or nm!=carteira[t]['meta_pct'] or divs!=carteira[t].get('divs',0):
-                    carteira[t].update({'qtde':nq, 'meta_pct':nm, 'divs':divs})
+                if nq!=carteira[t]['qtde'] or nm!=carteira[t]['meta_pct'] or divs!=carteira[t].get('divs',0) or pm_val!=carteira[t].get('pm',0):
+                    carteira[t].update({'qtde':nq, 'meta_pct':nm, 'divs':divs, 'pm':pm_val})
                     salvar_carteira(carteira)
 
         if executar or modo_live:
@@ -221,6 +222,8 @@ if check_password():
                         df['total_inv'] = df['qtde'] * df['pm']
                         df['lucro_cota'] = df['total_atual'] - df['total_inv']
                         df['lucro_real'] = df['lucro_cota'] + df['divs']
+                        df['rentab_pct'] = df.apply(lambda x: (x['lucro_real']/x['total_inv'])*100 if x['total_inv']>0 else 0, axis=1)
+                        df['yoc_pct'] = df.apply(lambda x: (x['divs']/x['total_inv'])*100 if x['total_inv']>0 else 0, axis=1)
                         df['setor'] = df.index.map(obter_setor)
                         
                         df_fim, sobra = calcular_compras(df, aporte)
@@ -237,17 +240,37 @@ if check_password():
                         k4.metric("Caixa/Sobra", f"R$ {sobra:,.2f}")
                         
                         st.divider()
+                        
+                        # --- GRÁFICOS ---
                         g1, g2 = st.columns(2)
                         with g1: st.plotly_chart(px.pie(df_fim, values='total_atual', names=df_fim.index, hole=0.5, title="Por Ativo"), use_container_width=True)
                         with g2: 
                             df_s = df_fim.groupby('setor')['total_atual'].sum().reset_index()
                             st.plotly_chart(px.pie(df_s, values='total_atual', names='setor', hole=0.5, title="Por Setor"), use_container_width=True)
 
+                        # --- LISTA DE COMPRAS ---
                         st.subheader("🛒 Ordem de Compra")
                         compra = df_fim[df_fim['comprar_qtd']>0].sort_values('custo_total', ascending=False)
                         if not compra.empty:
                             st.dataframe(compra[['preco_atual','meta_pct','comprar_qtd','custo_total']].style.format({'preco_atual':'R$ {:.2f}','custo_total':'R$ {:.2f}','meta_pct':'{:.0f}%'}), use_container_width=True)
                         else: st.success("Nada para comprar hoje!")
+                        
+                        # --- TABELA DE MONITORAMENTO (VOLTOU!) ---
+                        st.divider()
+                        st.subheader("🔎 Monitoramento Detalhado")
+                        cols_mostrar = ['qtde','pm','preco_atual','divs','lucro_real','rentab_pct', 'yoc_pct']
+                        st.dataframe(df_fim[cols_mostrar]
+                                     .sort_values('rentab_pct', ascending=False)
+                                     .style.format({
+                                         'pm':'R$ {:.2f}',
+                                         'preco_atual':'R$ {:.2f}',
+                                         'divs':'R$ {:.2f}',
+                                         'lucro_real':'R$ {:.2f}',
+                                         'rentab_pct':'{:.1f}%',
+                                         'yoc_pct':'{:.1f}%'
+                                     })
+                                     .applymap(lambda x: 'color: green' if x>0 else 'color: red', subset=['lucro_real','rentab_pct']), 
+                                     use_container_width=True)
 
     # ==========================================
     #      TELA 2: CONFIGURAÇÕES
@@ -265,13 +288,15 @@ if check_password():
 
         st.divider()
         
+        # --- CORREÇÃO DO BUG DA SENHA AQUI ---
         with st.container():
             st.subheader("🔑 Alterar Senha")
             c_s1, c_s2 = st.columns(2)
-            nova_senha = c_s1.text_input("Nova Senha")
-            confirmar = c_s2.text_input("Confirme a Senha")
+            nova_senha = c_s1.text_input("Nova Senha", type="password")
+            confirmar = c_s2.text_input("Confirme a Senha", type="password") # Corrigido nome da variável
+            
             if st.button("Salvar Nova Senha"):
-                if nova_senha == confirm:
+                if nova_senha == confirmar: # Corrigido comparação
                     if len(nova_senha) > 3:
                         conf['senha'] = nova_senha
                         salvar_config(conf)
@@ -286,16 +311,14 @@ if check_password():
         
         with st.container():
             st.subheader("💾 Backup e Restauração")
-            # Download
             if os.path.exists(ARQUIVO_DADOS):
                 with open(ARQUIVO_DADOS, "r") as f:
                     st.download_button("📥 Baixar Backup da Carteira (.json)", f, "minha_carteira.json")
             
-            # Modelos
             st.write("---")
             st.write("**Resetar ou Importar Modelo**")
             modelo = st.selectbox("Escolha um modelo:", ["Selecionar..."] + list(CARTEIRAS_PRONTAS.keys()))
-            if st.button("Aplicar Modelo (Cuidado: Mescla com atuais)"):
+            if st.button("Aplicar Modelo"):
                 if modelo != "Selecionar...":
                     novos = CARTEIRAS_PRONTAS[modelo]
                     for t, m in novos.items():
