@@ -3,3 +3,5 @@ pandas
 requests
 yfinance
 plotly
+gspread
+oauth2client
