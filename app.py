@@ -4,14 +4,14 @@ import requests
 import json
 import time
 import plotly.express as px
-import plotly.graph_objects as go # Nova ferramenta de gráficos manuais
+import plotly.graph_objects as go
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
 import math
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 9.8", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="Robô Investidor Pro 9.9", layout="wide", page_icon="🦅")
 
 # --- CONSTANTES ---
 NOME_PLANILHA_GOOGLE = "carteira_robo_db"
@@ -82,13 +82,20 @@ def carregar_carteira():
             for linha in dados:
                 t = linha['Ticker']
                 if not t: continue
-                qtde = linha['Qtd'] if linha['Qtd'] != '' else 0
-                meta = linha['Meta'] if linha['Meta'] != '' else 0
-                try: pm = float(str(linha['PM']).replace(',', '.'))
+                # Tratamento robusto para valores vazios
+                qtde = linha.get('Qtd', 0)
+                if qtde == '': qtde = 0
+                
+                meta = linha.get('Meta', 0)
+                if meta == '': meta = 0
+                
+                try: pm = float(str(linha.get('PM', 0)).replace(',', '.'))
                 except: pm = 0.0
-                try: divs = float(str(linha['Divs']).replace(',', '.'))
+                
+                try: divs = float(str(linha.get('Divs', 0)).replace(',', '.'))
                 except: divs = 0.0
-                carteira[t] = {'qtde': qtde, 'meta_pct': meta, 'pm': pm, 'divs': divs}
+                
+                carteira[t] = {'qtde': int(qtde), 'meta_pct': int(meta), 'pm': pm, 'divs': divs}
             return carteira
         except: return {}
     return {}
@@ -112,8 +119,8 @@ def carregar_config():
             dados = ws.get_all_records()
             if dados:
                 return {
-                    "senha": str(dados[0]['Senha']),
-                    "meta_mensal": float(str(dados[0]['MetaMensal']).replace(',', '.'))
+                    "senha": str(dados[0].get('Senha', '123456')),
+                    "meta_mensal": float(str(dados[0].get('MetaMensal', 1000)).replace(',', '.'))
                 }
         except: pass
     return padrao
@@ -354,7 +361,7 @@ if check_password():
                             hide_index=False
                         )
 
-                        # --- SIMULADOR BOLA DE NEVE (VERSÃO GRÁFICA MANUAL) ---
+                        # --- SIMULADOR BOLA DE NEVE (VERSÃO 9.9 - BLINDADA) ---
                         st.divider()
                         with st.expander("🔮 Simulador Bola de Neve (O Futuro)", expanded=False):
                             st.caption("Veja o poder dos juros compostos com seu aporte mensal atual.")
@@ -381,28 +388,20 @@ if check_password():
                             
                             st.metric(f"Patrimônio em {anos} anos", f"R$ {total:,.2f}", delta=f"Lucro de R$ {total - total_investido:,.2f}")
                             
-                            # --- GRÁFICO MANUAL (Super Robusto) ---
-                            fig_ev = go.Figure()
-                            # 1. Linha do dinheiro do bolso (Cinza)
-                            fig_ev.add_trace(go.Scatter(
-                                x=df_ev['Ano'], 
-                                y=df_ev['Total Investido'], 
-                                fill='tozeroy', 
-                                mode='lines', 
-                                name='Saiu do Bolso',
-                                line=dict(color='#808080')
-                            ))
-                            # 2. Linha do dinheiro com Juros (Verde) - Preenche até a linha cinza
-                            fig_ev.add_trace(go.Scatter(
-                                x=df_ev['Ano'], 
-                                y=df_ev['Total Acumulado'], 
-                                fill='tonexty', 
-                                mode='lines', 
-                                name='Com Juros (Bola de Neve)',
-                                line=dict(color='#00cc96')
-                            ))
-                            fig_ev.update_layout(title="Curva Exponencial de Riqueza", xaxis_title="Anos", yaxis_title="Patrimônio (R$)")
-                            st.plotly_chart(fig_ev, use_container_width=True)
+                            # --- GRÁFICO MANUAL COM PROTEÇÃO DE ERRO ---
+                            try:
+                                fig_ev = go.Figure()
+                                fig_ev.add_trace(go.Scatter(
+                                    x=df_ev['Ano'], y=df_ev['Total Investido'], fill='tozeroy', mode='lines', name='Saiu do Bolso', line=dict(color='#808080')
+                                ))
+                                fig_ev.add_trace(go.Scatter(
+                                    x=df_ev['Ano'], y=df_ev['Total Acumulado'], fill='tonexty', mode='lines', name='Com Juros', line=dict(color='#00cc96')
+                                ))
+                                fig_ev.update_layout(title="Curva Exponencial de Riqueza", xaxis_title="Anos", yaxis_title="Patrimônio (R$)")
+                                st.plotly_chart(fig_ev, use_container_width=True)
+                            except Exception as e:
+                                st.warning("Não foi possível gerar o gráfico visualmente, mas aqui estão os dados:")
+                                st.dataframe(df_ev)
 
             else: st.info("Filtro vazio.")
 
