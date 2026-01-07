@@ -9,7 +9,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import os
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 9.2", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="Robô Investidor Pro 9.3", layout="wide", page_icon="🦅")
 
 # --- NOME DA PLANILHA NO GOOGLE ---
 NOME_PLANILHA_GOOGLE = "carteira_robo_db"
@@ -27,7 +27,7 @@ SETORES = {
     "DIRR3": "Construção", "POMO4": "Indústria", "RECV3": "Petróleo"
 }
 
-# --- TODAS AS CARTEIRAS DE VOLTA ---
+# --- DEFINIÇÃO DAS ESTRATÉGIAS ---
 CARTEIRAS_PRONTAS = {
     "🏆 Carteira Recomendada IA": {
         "WEGE3": 10, "ITUB4": 15, "VALE3": 10, "TAEE11": 10, "PSSA3": 5, 
@@ -173,22 +173,54 @@ if check_password():
     if 'carteira_cache' not in st.session_state:
         with st.spinner("Baixando dados do Google Sheets..."):
             st.session_state['carteira_cache'] = carregar_carteira()
-    carteira = st.session_state['carteira_cache']
+    carteira_completa = st.session_state['carteira_cache']
 
     # ================= TELA: CARTEIRA =================
     if menu == "🏠 Minha Carteira":
         st.title("Minha Carteira (Nuvem ☁️)")
 
-        if not carteira: st.warning("Carteira vazia no Google Sheets.")
+        if not carteira_completa: st.warning("Carteira vazia no Google Sheets.")
 
-        patrimonio_est = sum([d['qtde'] * d.get('pm', 0) for d in carteira.values()])
+        # --- SISTEMA DE FILTRO INTELIGENTE ---
+        st.markdown("### 🔍 Filtrar Visualização")
+        opcoes_filtro = ["Todas"] + list(CARTEIRAS_PRONTAS.keys()) + ["Personalizados"]
+        filtro_selecionado = st.multiselect("Escolha quais carteiras ver:", opcoes_filtro, default=["Todas"])
+        
+        carteira_exibicao = {}
+        
+        # Lógica do Filtro
+        if "Todas" in filtro_selecionado or not filtro_selecionado:
+            carteira_exibicao = carteira_completa.copy()
+        else:
+            # Cria lista de tickers permitidos baseados na seleção
+            tickers_permitidos = []
+            todos_prontos = []
+            for k, v in CARTEIRAS_PRONTAS.items(): todos_prontos.extend(v.keys())
+
+            for selecao in filtro_selecionado:
+                if selecao in CARTEIRAS_PRONTAS:
+                    tickers_permitidos.extend(CARTEIRAS_PRONTAS[selecao].keys())
+                elif selecao == "Personalizados":
+                    # Adiciona quem NÃO está em nenhuma lista pronta
+                    for t in carteira_completa.keys():
+                        if t not in todos_prontos: tickers_permitidos.append(t)
+            
+            # Filtra o dicionário real
+            for t, dados in carteira_completa.items():
+                if t in tickers_permitidos:
+                    carteira_exibicao[t] = dados
+
+        st.divider()
+
+        # --- CÁLCULO DE LIBERDADE (BASEADO NO FILTRO) ---
+        patrimonio_est = sum([d['qtde'] * d.get('pm', 0) for d in carteira_exibicao.values()])
         renda_est = patrimonio_est * 0.007 
         meta = conf['meta_mensal']
         progresso = min(renda_est / meta, 1.0) if meta > 0 else 0
         
         c_meta1, c_meta2 = st.columns([3, 1])
         with c_meta1:
-            st.subheader(f"🚀 Rumo à Liberdade: R$ {renda_est:.2f} / R$ {meta:.2f}")
+            st.subheader(f"🚀 Liberdade (Visão Atual): R$ {renda_est:.2f} / R$ {meta:.2f}")
             st.progress(progresso)
         with c_meta2: st.metric("Concluído", f"{progresso*100:.1f}%")
         st.divider()
@@ -196,17 +228,17 @@ if check_password():
         c1, c2 = st.columns([1, 2])
         aporte = c1.number_input("💰 Aporte (R$)", value=1000.00, step=100.0)
         c2.write(""); c2.write("")
-        executar = c2.button("🚀 Analisar Carteira", type="primary")
+        executar = c2.button("🚀 Analisar Carteira Filtrada", type="primary")
 
-        # --- EDIÇÃO / SYNC GOOGLE ---
-        with st.expander("📝 Editar Ativos (Sincroniza com Google)", expanded=True):
+        # --- EDIÇÃO (Só mostra o filtrado) ---
+        with st.expander(f"📝 Editar Ativos ({len(carteira_exibicao)} visíveis)", expanded=True):
             add = st.text_input("Novo Ticker (ex: BBAS3)")
             if st.button("Adicionar") and add:
                 t = add.upper().strip().replace(".SA","")
-                if t not in carteira: 
-                    carteira[t]={'qtde':0,'meta_pct':10,'pm':0.0,'divs':0.0}
-                    salvar_carteira(carteira) 
-                    st.session_state['carteira_cache'] = carteira
+                if t not in carteira_completa: 
+                    carteira_completa[t]={'qtde':0,'meta_pct':10,'pm':0.0,'divs':0.0}
+                    salvar_carteira(carteira_completa) 
+                    st.session_state['carteira_cache'] = carteira_completa
                     st.rerun()
 
             st.divider()
@@ -221,34 +253,34 @@ if check_password():
             cols_head[3].markdown("**P. Médio**")
             cols_head[4].markdown("**Divs (R$)**")
             
-            for t in list(carteira.keys()):
+            for t in list(carteira_exibicao.keys()):
                 cols = st.columns([1, 1, 1, 1, 1, 0.5])
                 cols[0].write(f"**{t}**")
                 
-                # Campos com min_value=0 para evitar erros
-                nq = cols[1].number_input(f"Q_{t}", value=int(carteira[t]['qtde']), min_value=0, step=1, key=f"q_{t}", label_visibility="collapsed")
-                nm = cols[2].number_input(f"M_{t}", value=int(carteira[t]['meta_pct']), min_value=0, step=1, key=f"m_{t}", label_visibility="collapsed")
-                np = cols[3].number_input(f"P_{t}", value=float(carteira[t].get('pm',0)), min_value=0.0, step=0.01, format="%.2f", key=f"p_{t}", label_visibility="collapsed")
-                nd = cols[4].number_input(f"D_{t}", value=float(carteira[t].get('divs',0)), min_value=0.0, step=0.01, format="%.2f", key=f"d_{t}", label_visibility="collapsed")
+                nq = cols[1].number_input(f"Q_{t}", value=int(carteira_completa[t]['qtde']), min_value=0, step=1, key=f"q_{t}", label_visibility="collapsed")
+                nm = cols[2].number_input(f"M_{t}", value=int(carteira_completa[t]['meta_pct']), min_value=0, step=1, key=f"m_{t}", label_visibility="collapsed")
+                np = cols[3].number_input(f"P_{t}", value=float(carteira_completa[t].get('pm',0)), min_value=0.0, step=0.01, format="%.2f", key=f"p_{t}", label_visibility="collapsed")
+                nd = cols[4].number_input(f"D_{t}", value=float(carteira_completa[t].get('divs',0)), min_value=0.0, step=0.01, format="%.2f", key=f"d_{t}", label_visibility="collapsed")
                 
                 if cols[5].button("🗑️", key=f"del_{t}"): remover_lista.append(t); mudou_algo=True
 
-                if nq!=carteira[t]['qtde'] or nm!=carteira[t]['meta_pct'] or np!=carteira[t].get('pm',0) or nd!=carteira[t].get('divs',0):
-                    carteira[t].update({'qtde':nq, 'meta_pct':nm, 'pm':np, 'divs':nd})
+                if nq!=carteira_completa[t]['qtde'] or nm!=carteira_completa[t]['meta_pct'] or np!=carteira_completa[t].get('pm',0) or nd!=carteira_completa[t].get('divs',0):
+                    carteira_completa[t].update({'qtde':nq, 'meta_pct':nm, 'pm':np, 'divs':nd})
                     mudou_algo=True
             
             if remover_lista:
-                for t in remover_lista: del carteira[t]
-                salvar_carteira(carteira); st.session_state['carteira_cache'] = carteira; st.rerun()
+                for t in remover_lista: del carteira_completa[t]
+                salvar_carteira(carteira_completa); st.session_state['carteira_cache'] = carteira_completa; st.rerun()
             
             if mudou_algo: 
-                salvar_carteira(carteira)
-                st.session_state['carteira_cache'] = carteira
+                salvar_carteira(carteira_completa)
+                st.session_state['carteira_cache'] = carteira_completa
 
+        # --- DASHBOARD (Baseado no filtrado) ---
         if executar or modo_live:
-            if carteira:
+            if carteira_exibicao:
                 with st.spinner("Analisando Mercado..."):
-                    df = pd.DataFrame.from_dict(carteira, orient='index')
+                    df = pd.DataFrame.from_dict(carteira_exibicao, orient='index')
                     precos = {}
                     for t in df.index: precos[t] = obter_preco_atual(t)
                     df['preco_atual'] = df.index.map(precos)
@@ -268,20 +300,20 @@ if check_password():
                         k1, k2, k3, k4 = st.columns(4)
                         patr = df_fim['total_atual'].sum()
                         lucro = df_fim['lucro_real'].sum()
-                        k1.metric("Patrimônio", f"R$ {patr:,.2f}")
-                        k2.metric("Lucro Real (c/ Divs)", f"R$ {lucro:,.2f}", delta=f"{(lucro/patr*100) if patr>0 else 0:.1f}%")
+                        k1.metric("Patrimônio (Filtro)", f"R$ {patr:,.2f}")
+                        k2.metric("Lucro (Filtro)", f"R$ {lucro:,.2f}", delta=f"{(lucro/patr*100) if patr>0 else 0:.1f}%")
                         k3.metric("Só Proventos", f"R$ {df_fim['divs'].sum():,.2f}")
                         k4.metric("Caixa/Sobra", f"R$ {sobra:,.2f}")
 
                         st.divider()
 
                         g1, g2 = st.columns(2)
-                        with g1: st.plotly_chart(px.pie(df_fim, values='total_atual', names=df_fim.index, title="Por Ativo", hole=0.5), use_container_width=True)
+                        with g1: st.plotly_chart(px.pie(df_fim, values='total_atual', names=df_fim.index, title="Por Ativo (Visão Atual)", hole=0.5), use_container_width=True)
                         with g2: 
                             df_s = df_fim.groupby('setor')['total_atual'].sum().reset_index()
-                            st.plotly_chart(px.pie(df_s, values='total_atual', names='setor', title="Por Setor", hole=0.5), use_container_width=True)
+                            st.plotly_chart(px.pie(df_s, values='total_atual', names='setor', title="Por Setor (Visão Atual)", hole=0.5), use_container_width=True)
                         
-                        st.subheader("🛒 Ordem de Compra")
+                        st.subheader("🛒 Ordem de Compra (Para essa seleção)")
                         compra = df_fim[df_fim['comprar_qtd']>0].sort_values('custo_total', ascending=False)
                         if not compra.empty:
                             st.dataframe(compra[['preco_atual','meta_pct','comprar_qtd','custo_total']].style.format({'preco_atual':'R$ {:.2f}','custo_total':'R$ {:.2f}','meta_pct':'{:.0f}%'}), use_container_width=True)
@@ -293,6 +325,8 @@ if check_password():
                             st.dataframe(df_fim[cols].sort_values('rentab_pct', ascending=False)
                                          .style.format({'pm':'R$ {:.2f}','preco_atual':'R$ {:.2f}','divs':'R$ {:.2f}','lucro_real':'R$ {:.2f}','rentab_pct':'{:.1f}%','yoc_pct':'{:.1f}%'})
                                          .applymap(lambda x: 'color: green' if x>0 else 'color: red', subset=['lucro_real','rentab_pct']), use_container_width=True)
+            else:
+                st.info("Nenhum ativo encontrado para o filtro selecionado.")
 
     # ================= TELA: CONFIGURAÇÕES =================
     elif menu == "⚙️ Configurações":
@@ -325,9 +359,9 @@ if check_password():
             if mod != "...":
                 novos = CARTEIRAS_PRONTAS[mod]
                 for t, m in novos.items():
-                    if t not in carteira: carteira[t] = {'qtde':0, 'meta_pct':m, 'pm':0.0, 'divs':0.0}
-                salvar_carteira(carteira)
-                st.session_state['carteira_cache'] = carteira
+                    if t not in carteira_completa: carteira_completa[t] = {'qtde':0, 'meta_pct':m, 'pm':0.0, 'divs':0.0}
+                salvar_carteira(carteira_completa)
+                st.session_state['carteira_cache'] = carteira_completa
                 st.toast("Modelo enviado para o Google Sheets!")
                 time.sleep(1); st.rerun()
 
