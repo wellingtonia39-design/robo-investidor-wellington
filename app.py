@@ -7,10 +7,10 @@ import plotly.express as px
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import os
-import math # Nova biblioteca para cálculos financeiros
+import math
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Robô Investidor Pro 9.5", layout="wide", page_icon="🦅")
+st.set_page_config(page_title="Robô Investidor Pro 9.6", layout="wide", page_icon="🦅")
 
 # --- CONSTANTES ---
 NOME_PLANILHA_GOOGLE = "carteira_robo_db"
@@ -140,7 +140,6 @@ def obter_setor(ticker):
     return SETORES.get(ticker.replace(".SA","").strip(), "Outros")
 
 def obter_link_investidor10(ticker):
-    # Gera link dinâmico para análise
     tipo = "fundos-imobiliarios" if "11" in ticker else "acoes"
     return f"https://investidor10.com.br/{tipo}/{ticker.lower()}/"
 
@@ -305,7 +304,7 @@ if check_password():
                         df['rentab_pct'] = df.apply(lambda x: (x['lucro_real']/x['total_inv'])*100 if x['total_inv']>0 else 0, axis=1)
                         df['yoc_pct'] = df.apply(lambda x: (x['divs']/x['total_inv'])*100 if x['total_inv']>0 else 0, axis=1)
                         df['setor'] = df.index.map(obter_setor)
-                        df['link_analise'] = df.index.map(obter_link_investidor10) # Link novo
+                        df['link_analise'] = df.index.map(obter_link_investidor10)
 
                         df_fim, sobra = calcular_compras(df, aporte)
                         
@@ -336,7 +335,6 @@ if check_password():
                         st.divider()
                         st.subheader("🔎 Detalhes Interativos")
                         
-                        # --- TABELA INTERATIVA COM LINKS ---
                         cols = ['link_analise', 'qtde','pm','preco_atual','divs','lucro_real','rentab_pct', 'yoc_pct']
                         df_show = df_fim[cols].sort_values('rentab_pct', ascending=False)
                         
@@ -355,7 +353,7 @@ if check_password():
                             hide_index=False
                         )
 
-                        # --- SIMULADOR BOLA DE NEVE ---
+                        # --- SIMULADOR BOLA DE NEVE (CORRIGIDO) ---
                         st.divider()
                         with st.expander("🔮 Simulador Bola de Neve (O Futuro)", expanded=False):
                             st.caption("Veja o poder dos juros compostos com seu aporte mensal atual.")
@@ -367,31 +365,31 @@ if check_password():
                             taxa_mensal = (1 + taxa_anual/100)**(1/12) - 1
                             meses = anos * 12
                             
-                            # Cálculo mês a mês
                             evolucao = []
-                            total = patr # Começa com o patrimônio atual
+                            total = patr
                             total_investido = patr
                             
                             for m in range(meses):
                                 total = total * (1 + taxa_mensal) + aporte_sim
                                 total_investido += aporte_sim
-                                if m % 12 == 0: # Registra ano a ano para o gráfico não ficar pesado
+                                if m % 12 == 0:
                                     evolucao.append({"Ano": (m//12)+1, "Total Acumulado": total, "Total Investido": total_investido})
                             
-                            # Último mês
                             evolucao.append({"Ano": anos, "Total Acumulado": total, "Total Investido": total_investido})
-                            
                             df_ev = pd.DataFrame(evolucao)
                             
                             st.metric(f"Patrimônio em {anos} anos", f"R$ {total:,.2f}", delta=f"Lucro de R$ {total - total_investido:,.2f}")
                             
-                            fig_ev = px.area(df_ev, x="Ano", y=["Total Investido", "Total Acumulado"], 
+                            # --- CORREÇÃO DO GRÁFICO ---
+                            # Transforma de "Largo" para "Longo" para o Plotly não bugar
+                            df_long = df_ev.melt(id_vars=["Ano"], value_vars=["Total Investido", "Total Acumulado"], var_name="Tipo", value_name="Reais")
+                            
+                            fig_ev = px.area(df_long, x="Ano", y="Reais", color="Tipo",
                                              title="Curva Exponencial de Riqueza", color_discrete_sequence=["#gray", "#00cc96"])
                             st.plotly_chart(fig_ev, use_container_width=True)
 
             else: st.info("Filtro vazio.")
 
-    # ================= TELA: CONFIGURAÇÕES =================
     elif menu == "⚙️ Configurações":
         st.title("Configurações (Nuvem ☁️)")
         
